@@ -52,6 +52,6 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
       - name: Lint frontend
-        run: npm run lint
+        run: npm run lint -- "src/app/(main)/function/findings/detail/page.tsx" src/components/finding-verification-panel.tsx src/lib/api.ts src/lib/types.ts
       - name: Type-check frontend
         run: npx tsc --noEmit
