@@ -34,8 +34,8 @@ type FindingVerificationRun struct {
 	CreatedAt  time.Time       `json:"created_at"`
 	StartedAt  *time.Time      `json:"started_at,omitempty"`
 	FinishedAt *time.Time      `json:"finished_at,omitempty"`
-	Attempts int `json:"attempts"`
-	LastError string `json:"last_error,omitempty"`
+	Attempts   int    `json:"attempts"`
+	LastError  string `json:"last_error,omitempty"`
 }
 
 const findingVerificationColumns = `id,finding_id,task_id,intent_id,status,verdict,verifier,summary,evidence,created_at,started_at,finished_at,attempts,last_error`
@@ -85,7 +85,7 @@ func (d *DB) ClaimFindingVerificationRun(ctx context.Context, runID int64, verif
 	}
 	run, err := scanFindingVerificationRun(d.QueryRowContext(ctx, `
 UPDATE finding_verification_runs
-SET status='running', verifier=$2, started_at=now()
+SET status='running', verifier=$2, started_at=now(), attempts=attempts+1
 WHERE id=$1 AND status='pending'
 RETURNING `+findingVerificationColumns, runID, verifier))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -144,7 +144,7 @@ func (d *DB) CompleteFindingVerificationRun(ctx context.Context, runID int64, ve
 	var findingID int64
 	err = tx.QueryRowContext(ctx, `
 UPDATE finding_verification_runs
-SET status='completed', verdict=$3, summary=$4, evidence=$5, finished_at=now()
+SET status='completed', verdict=$3, summary=$4, evidence=$5, finished_at=now(), last_error=''
 WHERE id=$1 AND verifier=$2 AND status='running'
 RETURNING finding_id`, runID, verifier, verdict, summary, string(evidence)).Scan(&findingID)
 	if errors.Is(err, sql.ErrNoRows) {

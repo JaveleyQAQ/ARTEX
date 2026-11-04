@@ -22,7 +22,7 @@ func TestFindingVerificationLifecycle(t *testing.T) {
 	if err != nil || len(runs) != 1 || runs[0].Status != FindingVerificationPending {
 		t.Fatalf("initial runs = %+v, err=%v", runs, err)
 	}
- run,err:=d.ClaimFindingVerificationRun(t.Context(),runs[0].ID,"independent-reviewer");if err!=nil||run.Status!=FindingVerificationRunning{t.Fatalf("claim=%+v err=%v",run,err)}
+ run,err:=d.ClaimFindingVerificationRun(t.Context(),runs[0].ID,"independent-reviewer");if err!=nil||run.Status!=FindingVerificationRunning||run.Attempts!=1{t.Fatalf("claim=%+v err=%v",run,err)}
  if _,err=d.ClaimFindingVerificationRun(t.Context(),run.ID,"second-reviewer");!errors.Is(err,ErrVerificationRunUnavailable){t.Fatalf("second claim should fail, got %v",err)}
  completed,err:=d.CompleteFindingVerificationRun(t.Context(),run.ID,"independent-reviewer",FindingVerdictConfirmed,"independent evidence review passed",json.RawMessage(`[{"kind":"response","observation":"fixture marker"}]`))
  if err!=nil||completed.Status!=FindingVerificationComplete||completed.Verdict!=FindingVerdictConfirmed{t.Fatalf("complete=%+v err=%v",completed,err)}

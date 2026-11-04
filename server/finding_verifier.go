@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/norma/llm"
 )
@@ -44,10 +43,15 @@ type findingVerifierInput struct {
 	Intent    json.RawMessage `json:"intent,omitempty"`
 }
 
+type findingVerifierEvidence struct {
+	Quote  string `json:"quote"`
+	Reason string `json:"reason"`
+}
+
 type findingVerifierOutput struct {
-	Verdict  string           `json:"verdict"`
-	Summary  string           `json:"summary"`
-	Evidence []map[string]string `json:"evidence"`
+	Verdict  string                     `json:"verdict"`
+	Summary  string                     `json:"summary"`
+	Evidence []findingVerifierEvidence  `json:"evidence"`
 }
 
 // runFindingVerificationWorker is a durable queue consumer. Claiming is done in
@@ -184,9 +188,9 @@ func parseFindingVerifierOutput(raw string) (*findingVerifierOutput, error) {
 		output.Evidence = output.Evidence[:20]
 	}
 	for i := range output.Evidence {
-		output.Evidence[i]["quote"] = trunc(output.Evidence[i]["quote"], 500)
-		output.Evidence[i]["reason"] = trunc(output.Evidence[i]["reason"], 500)
-		if strings.TrimSpace(output.Evidence[i]["quote"]) == "" || strings.TrimSpace(output.Evidence[i]["reason"]) == "" {
+		output.Evidence[i].Quote = trunc(output.Evidence[i].Quote, 500)
+		output.Evidence[i].Reason = trunc(output.Evidence[i].Reason, 500)
+		if strings.TrimSpace(output.Evidence[i].Quote) == "" || strings.TrimSpace(output.Evidence[i].Reason) == "" {
 			return nil, fmt.Errorf("evidence item %d is missing quote or reason", i)
 		}
 	}
