@@ -803,13 +803,6 @@ func (t *ToolSet) relatedTaskOverviews() []map[string]any {
 			recentFindings = append(recentFindings, entry)
 		}
 		item["recent_findings"] = recentFindings
-		pendingFindingList := make([]map[string]any, 0, len(pendingFindings))
-		for _, finding := range pendingFindings {
-			entry := inheritedMap(compactFinding(finding), source.Task.TaskID)
-			entry["summary"] = budget.take(entry["summary"], 400)
-			pendingFindingList = append(pendingFindingList, entry)
-		}
-		item["pending_verification_findings"] = pendingFindingList
 		recentFacts := make([]map[string]any, 0, len(facts))
 		for _, fact := range facts {
 			if hidden(fact.ID) {
