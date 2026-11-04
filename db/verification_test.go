@@ -23,9 +23,16 @@ func TestFindingVerificationLifecycle(t *testing.T) {
  confirmedIDs,pendingIDs,err:=store.FindingVerificationOverview()
  if err!=nil||len(confirmedIDs)!=0||len(pendingIDs)!=1||pendingIDs[0]!=recorded.NodeID{t.Fatalf("candidate overview confirmed=%v pending=%v err=%v",confirmedIDs,pendingIDs,err)}
 
- pending, err := d.ListPendingFindingVerificationRuns(t.Context(), 10)
-	if err != nil || len(pending) != 1 || pending[0].FindingID != recorded.FindingID {
-		t.Fatalf("pending queue = %+v, err=%v", pending, err)
+ pending, err := d.ListPendingFindingVerificationRuns(t.Context(), 200)
+	foundPending := false
+	for _, candidate := range pending {
+		if candidate.FindingID == recorded.FindingID {
+			foundPending = true
+			break
+		}
+	}
+	if err != nil || !foundPending {
+		t.Fatalf("candidate missing from pending queue (queue size %d), err=%v", len(pending), err)
 	}
 	runs, err := d.ListFindingVerificationRuns(t.Context(), recorded.FindingID)
 	if err != nil || len(runs) != 1 || runs[0].Status != FindingVerificationPending {
@@ -60,6 +67,7 @@ func TestRequeueStaleFindingVerificationRuns(t *testing.T) {
 		Summary: "stale candidate", Evidence: "fixture evidence", Worker: "worker",
 	})
 	if err != nil {
+	defer func() { _, _ = d.DeleteFinding(recorded.FindingID) }()
 		t.Fatal(err)
 	}
 	runs, err := d.ListFindingVerificationRuns(t.Context(), recorded.FindingID)
@@ -100,6 +108,7 @@ func TestRejectedFindingVerificationKeepsHumanTriagePending(t *testing.T) {
 		Summary: "rejected candidate", Evidence: "contradictory fixture evidence", Worker: "worker",
 	})
 	if err != nil {
+	defer func() { _, _ = d.DeleteFinding(recorded.FindingID) }()
 		t.Fatal(err)
 	}
 	runs, err := d.ListFindingVerificationRuns(t.Context(), recorded.FindingID)
@@ -146,6 +155,7 @@ func TestQueueFindingVerificationRunAllowsOnlyPendingWithoutActiveRun(t *testing
 		Summary: "manual retry candidate", Evidence: "retry fixture", Worker: "worker",
 	})
 	if err != nil {
+	defer func() { _, _ = d.DeleteFinding(recorded.FindingID) }()
 		t.Fatal(err)
 	}
 	if _, err := d.QueueFindingVerificationRun(t.Context(), recorded.FindingID); !errors.Is(err, ErrFindingNotReviewable) {

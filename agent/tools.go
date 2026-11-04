@@ -573,6 +573,56 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 				// 都重复携带的大量字符串，对规划决策价值有限）；具体主机按需 list_assets 查。
 				m["host_count"] = len(hosts)
 			}
+			// Scope remains visible even when coverage metrics are disabled. This
+			// lets the planner distinguish authorized scope from discovered assets.
+			if scopes, scopeErr := t.as.ListTaskScopeWithSources(t.taskID); scopeErr == nil {
+				const scopeCap = 40
+				scopeList := make([]map[string]any, 0, min(len(scopes), scopeCap))
+				for i, scopeRow := range scopes {
+					if i >= scopeCap {
+						m["scope_truncated"] = true
+						break
+					}
+					entry := map[string]any{
+						"id": scopeRow.ID, "task_id": scopeRow.TaskID, "kind": scopeRow.Kind,
+						"source": scopeRow.Source,
+					}
+					if scopeRow.CompanyID != nil {
+						entry["company_id"] = *scopeRow.CompanyID
+						entry["company_name"] = scopeRow.CompanyName
+						if t.cs != nil {
+							if rules, ruleErr := t.cs.GetScope(*scopeRow.CompanyID); ruleErr == nil {
+								companyScope := make([]map[string]any, 0, min(len(rules), 40))
+								companyKeywords := make([]string, 0)
+								for j, rule := range rules {
+									if j >= 40 {
+										entry["company_scope_truncated"] = true
+										break
+									}
+									value := rule.Raw
+									if value == "" {
+										value = rule.Value
+										if value == "" { value = rule.Domain }
+										if value == "" { value = rule.Net }
+									}
+									companyScope = append(companyScope, map[string]any{"kind": rule.Kind, "value": value})
+									if rule.Kind == "keyword" {
+										companyKeywords = append(companyKeywords, value)
+									}
+								}
+								entry["company_scope"] = companyScope
+								entry["company_keywords"] = companyKeywords
+							}
+						}
+					}
+					if scopeRow.Domain != "" { entry["domain"] = scopeRow.Domain }
+					if scopeRow.Net != "" { entry["net"] = scopeRow.Net }
+					if scopeRow.Value != "" { entry["value"] = scopeRow.Value }
+					if scopeRow.Reason != "" { entry["reason"] = scopeRow.Reason }
+					scopeList = append(scopeList, entry)
+				}
+				m["scope"] = scopeList
+			}
 			if len(m) > 0 {
 				out["coverage"] = m
 			}
