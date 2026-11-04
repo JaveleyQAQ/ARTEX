@@ -1019,10 +1019,50 @@ func (t *ToolSet) nodeDetail() actool.CoreTool {
 
 // intentItem 是 add_intent 批量/单条的一条探索方向。
 type intentItem struct {
-	Summary   string            `json:"summary"`
-	AssetIDs  []json.RawMessage `json:"asset_ids"`
-	ParentIDs []json.RawMessage `json:"parent_ids"`
-	Priority  int               `json:"priority"`
+	Summary            string            `json:"summary"`
+	AssetIDs           []json.RawMessage `json:"asset_ids"`
+	ParentIDs          []json.RawMessage `json:"parent_ids"`
+	Priority           int               `json:"priority"`
+	Hypothesis         string            `json:"hypothesis"`
+	ExpectedObservation string           `json:"expected_observation"`
+	SuccessCriteria    string            `json:"success_criteria"`
+	StopConditions     string            `json:"stop_conditions"`
+}
+
+// intentItemProperties is shared by the single-intent and batch-intent schemas.
+// Keeping the batch item schema explicit lets providers validate the same
+// hypothesis contract in both submission modes.
+func intentItemProperties() map[string]any {
+	return map[string]any{
+		"summary": str("一句话描述探索方向：做什么+为什么。"),
+		"asset_ids": map[string]any{"type":"array","items":map[string]any{"type":"integer"},"description":"本方向对应的目标资产 ID。"},
+		"parent_ids": map[string]any{"type":"array","items":map[string]any{"type":"integer"},"description":"派生本方向的事实/发现节点 ID。"},
+		"priority": intp("优先级 0-10，默认5"),
+		"hypothesis": str("待验证的可证伪假设：基于哪些已知事实，怀疑存在什么条件或关系。"),
+		"expected_observation": str("若假设成立，预期观察到什么；若不成立，可能观察到什么。"),
+		"success_criteria": str("什么证据足以支持/否定该假设；避免仅凭版本或猜测下结论。"),
+		"stop_conditions": str("何时停止本方向：证据已充分、超出任务范围、风险/预算限制或需要人工确认。"),
+	}
+}
+
+// intentPayload stores the structured reasoning contract in the existing JSONB
+// payload. This is backward-compatible: older intents simply omit these fields.
+func intentPayload(it intentItem, anchors []int64) map[string]any {
+	payload := map[string]any{"summary": strings.TrimSpace(it.Summary)}
+	if len(anchors) > 0 {
+		payload["asset_ids"] = anchors
+	}
+	for key, value := range map[string]string{
+		"hypothesis": it.Hypothesis,
+		"expected_observation": it.ExpectedObservation,
+		"success_criteria": it.SuccessCriteria,
+		"stop_conditions": it.StopConditions,
+	} {
+		if value = strings.TrimSpace(value); value != "" {
+			payload[key] = value
+		}
+	}
+	return payload
 }
 
 // addOneIntent 创建一条意图节点并连上游血缘，返回 id。
@@ -1064,10 +1104,7 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 			return 0, fmt.Errorf("%s", b.String())
 		}
 	}
-	payload := map[string]any{"summary": it.Summary}
-	if len(anchors) > 0 {
-		payload["asset_ids"] = anchors
-	}
+	payload := intentPayload(it, anchors)
 	id, err := t.ts.AddIntent(payload, priority, anchors, "planner")
 	if err != nil {
 		return 0, err
@@ -1092,11 +1129,19 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 	return t.writeExpTool("add_intent", "生成【探索方向】写入 frontier，并连入探索链路。意图是开放的探索方向，不是固定类型——用 summary 一句话自由描述要探索/验证/利用什么。\n"+
 		"★优先批量：一轮筛出的多个新方向放进 intents 数组一次提交（比逐条调用省往返）。返回 ids 数组，与 intents 等长同序（失败项 id=0，详情见 errors）。单条则省略 intents 直接给顶层 summary。",
 		obj(map[string]any{
-			"intents":    map[string]any{"type": "array", "description": "【优先用这个】要新增的探索方向数组，按顺序处理。每个元素字段同下方顶层字段（summary/asset_ids/parent_ids/priority）。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
-			"summary":    str("[单条] 一句话描述这个探索方向：做什么+为什么。已写清方向即可，不依赖资产 id。"),
-			"asset_ids":  map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "本方向要测试/攻击的【目标资产 id】（**尽量传**，0/1/多个；是 list_assets 返回的资产 id，不是探索节点 id）：这条探索方向针对哪些资产（站点/接口/参数/主机等）。只要方向围绕某些具体资产就务必传上——它是「这条探索打哪些目标」的结构化标记，用于覆盖去重、把意图连入资产链路。仅当纯全局侦察、确实没有具体目标资产时才留空。"},
-			"parent_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "上游锚点 id（可选，0/1/多个）：本方向由哪些【已确认的事实(fact)/发现(finding)】综合得出。**只能填已存在的 fact/finding 节点 id,不能填意图/目标/提示**——意图必须锚在已确认知识上,发现驱动而非凭空规划。多个事实共同产生一个新意图就传多个;顶层全新侦察方向请留空（会自动挂到任务起点 origin fact）。"},
-			"priority":   intp("优先级 0-10，默认5"),
+			"intents": map[string]any{
+				"type": "array",
+				"description": "【优先用这个】要新增的探索方向数组，按顺序处理。每个元素字段同下方单条字段，建议填写 hypothesis / expected_observation / success_criteria / stop_conditions。返回 ids 与本数组等长、同序。",
+				"items": obj(intentItemProperties(), "summary"),
+			},
+			"summary": str("[单条] 一句话描述这个探索方向：做什么+为什么。已写清方向即可，不依赖资产 id。"),
+			"asset_ids": map[string]any{"type":"array","items":map[string]any{"type":"integer"},"description":"本方向对应的目标资产 ID。"},
+			"parent_ids": map[string]any{"type":"array","items":map[string]any{"type":"integer"},"description":"派生本方向的事实/发现节点 ID。"},
+			"priority": intp("优先级 0-10，默认5"),
+			"hypothesis": str("待验证的可证伪假设。"),
+			"expected_observation": str("假设成立/不成立时分别预期观察到什么。"),
+			"success_criteria": str("什么证据足以支持或否定假设。"),
+			"stop_conditions": str("何时停止本方向或请求人工确认。"),
 		}),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
