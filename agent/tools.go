@@ -879,9 +879,6 @@ func (t *ToolSet) relatedTaskOverviews() []map[string]any {
 				item["cold_digests_more"] = more // 被截断的更旧 digest 的 id；expand_digest(id) 展开
 			}
 		}
-		if statsErr == nil {
-			item["node_stats"] = stats
-		}
 
 		if t.as != nil {
 			if scopeRows, err := t.as.ListTaskScope(source.Task.TaskID); err == nil && len(scopeRows) > 0 {
