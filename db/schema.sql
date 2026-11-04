@@ -1396,6 +1396,8 @@ CREATE TABLE IF NOT EXISTS finding_verification_runs (
     verdict TEXT NOT NULL DEFAULT '' CHECK (verdict IN ('','confirmed','rejected','inconclusive')),
     verifier TEXT NOT NULL DEFAULT '',
     summary TEXT NOT NULL DEFAULT '',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT NOT NULL DEFAULT '',
     evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at TIMESTAMPTZ,
@@ -1403,3 +1405,6 @@ CREATE TABLE IF NOT EXISTS finding_verification_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_finding_verification_history ON finding_verification_runs(finding_id, id DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_finding_verification_active ON finding_verification_runs(finding_id) WHERE status IN ('pending','running');
+
+ALTER TABLE finding_verification_runs ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE finding_verification_runs ADD COLUMN IF NOT EXISTS last_error TEXT NOT NULL DEFAULT '';
