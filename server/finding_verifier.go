@@ -222,3 +222,53 @@ func validateFindingVerifierEvidence(output *findingVerifierOutput, sourceEviden
 	return nil
 }
 
+
+
+func (s *Server) listFindingVerificationRuns(w http.ResponseWriter, r *http.Request) {
+	pg := s.pg(w)
+	if pg == nil {
+		return
+	}
+	id, ok := pathInt(r, "id")
+	if !ok || id <= 0 {
+		writeErr(w, http.StatusBadRequest, "bad finding id")
+		return
+	}
+	finding, err := pg.GetFinding(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if finding == nil {
+		writeErr(w, http.StatusNotFound, "finding not found")
+		return
+	}
+	runs, err := pg.ListFindingVerificationRuns(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
+}
+
+func (s *Server) retryFindingVerification(w http.ResponseWriter, r *http.Request) {
+	pg := s.pg(w)
+	if pg == nil {
+		return
+	}
+	id, ok := pathInt(r, "id")
+	if !ok || id <= 0 {
+		writeErr(w, http.StatusBadRequest, "bad finding id")
+		return
+	}
+	run, err := pg.QueueFindingVerificationRun(r.Context(), id)
+	if errors.Is(err, db.ErrFindingNotReviewable) {
+		writeErr(w, http.StatusConflict, "漏洞不存在、已被人工处置，或已有复核任务正在排队/执行")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"run": run})
+}

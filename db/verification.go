@@ -277,3 +277,33 @@ ORDER BY f.id DESC`, s.expID)
 	}
 	return confirmed, pending, rows.Err()
 }
+
+
+var ErrFindingNotReviewable = errors.New("finding is not eligible for independent verification")
+
+// QueueFindingVerificationRun manually requeues a pending candidate after an
+// inconclusive/failed review. The partial unique index is the concurrency guard.
+func (d *DB) QueueFindingVerificationRun(ctx context.Context, findingID int64) (*FindingVerificationRun, error) {
+	if findingID <= 0 {
+		return nil, errors.New("finding id is required")
+	}
+	run, err := scanFindingVerificationRun(d.QueryRowContext(ctx, `
+INSERT INTO finding_verification_runs(finding_id,task_id,intent_id,status,evidence)
+SELECT f.id, f.task_id,
+       (SELECT previous.intent_id FROM finding_verification_runs previous
+        WHERE previous.finding_id=f.id ORDER BY previous.id DESC LIMIT 1),
+       'pending',
+       jsonb_build_array(jsonb_build_object('kind','manual_retry','requested_at',now()))
+FROM findings f
+WHERE f.id=$1 AND f.status='pending' AND f.task_id IS NOT NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM finding_verification_runs active
+      WHERE active.finding_id=f.id AND active.status IN ('pending','running')
+  )
+ON CONFLICT (finding_id) WHERE status IN ('pending','running') DO NOTHING
+RETURNING `+findingVerificationColumns, findingID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrFindingNotReviewable
+	}
+	return run, err
+}

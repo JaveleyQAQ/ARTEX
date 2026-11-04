@@ -36,6 +36,7 @@ import type {
   ExplorationNodePage,
   ExplorationNodeQuery,
   Finding,
+  FindingVerificationRun,
   FindingAssetTree,
   FindingDeepenResponse,
   FindingGroupsPage,
@@ -593,6 +594,10 @@ export const api = {
     get<Finding>(
       `/exploration/findings/${id}${contextTaskId ? `?context_task=${encodeURIComponent(contextTaskId)}` : ""}`,
     ),
+  findingVerificationRuns: (id: string) =>
+    get<{ runs: FindingVerificationRun[] }>(`/exploration/findings/${id}/verification-runs`).then((r) => arr(r.runs)),
+  retryFindingVerification: (id: string) =>
+    post<{ run: FindingVerificationRun }>(`/exploration/findings/${id}/verification-runs/retry`),
   findingTraffic: (id: string, contextTask?: string) =>
     get<FindingTraffic>(
       `/exploration/findings/${id}/traffic${contextTask ? `?context_task=${encodeURIComponent(contextTask)}` : ""}`,

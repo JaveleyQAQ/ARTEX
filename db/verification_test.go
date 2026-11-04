@@ -128,3 +128,49 @@ func TestRejectedFindingVerificationDismissesCandidate(t *testing.T) {
 		t.Fatalf("rejected overview confirmed=%v pending=%v err=%v", confirmed, pending, err)
 	}
 }
+
+func TestQueueFindingVerificationRunAllowsOnlyPendingWithoutActiveRun(t *testing.T) {
+	d, err := Open(testDSN(t))
+	if err != nil {
+		t.Skipf("postgres unavailable: %v", err)
+	}
+	defer d.Close()
+	task, err := d.CreateTask("manual retry", "fixture", nil, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.DeleteTask(task.ID)
+	store := d.Exploration(task.ExplorationID)
+	recorded, err := store.RecordFinding(t.Context(), RecordFindingInput{
+		TaskID: task.ID, VulnClass: "TEST", Severity: SeverityLow,
+		Summary: "manual retry candidate", Evidence: "retry fixture", Worker: "worker",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.QueueFindingVerificationRun(t.Context(), recorded.FindingID); !errors.Is(err, ErrFindingNotReviewable) {
+		t.Fatalf("active run must block duplicate queueing, got %v", err)
+	}
+	runs, err := d.ListFindingVerificationRuns(t.Context(), recorded.FindingID)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("runs=%+v err=%v", runs, err)
+	}
+	claimed, err := d.ClaimFindingVerificationRun(t.Context(), runs[0].ID, "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CompleteFindingVerificationRun(t.Context(), claimed.ID, "reviewer",
+		FindingVerdictInconclusive, "evidence is insufficient", json.RawMessage("[]")); err != nil {
+		t.Fatal(err)
+	}
+	retry, err := d.QueueFindingVerificationRun(t.Context(), recorded.FindingID)
+	if err != nil || retry.Status != FindingVerificationPending {
+		t.Fatalf("manual retry=%+v err=%v", retry, err)
+	}
+	if _, err := d.SetFindingStatus(recorded.FindingID, FindingConfirmed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.QueueFindingVerificationRun(t.Context(), recorded.FindingID); !errors.Is(err, ErrFindingNotReviewable) {
+		t.Fatalf("human-confirmed finding must not be requeued, got %v", err)
+	}
+}

@@ -1610,3 +1610,21 @@ export interface InterceptExecution {
   seq: number;
   items: Activity[];
 }
+
+
+export interface FindingVerificationRun {
+  id: number;
+  finding_id: number;
+  task_id?: number;
+  intent_id?: number;
+  status: "pending" | "running" | "completed";
+  verdict: "" | "confirmed" | "rejected" | "inconclusive";
+  verifier: string;
+  summary: string;
+  evidence: Array<Record<string, string>>;
+  attempts: number;
+  last_error?: string;
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+}
