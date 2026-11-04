@@ -941,7 +941,9 @@ func compactNode(n *db.Node) map[string]any {
 		m["finding_status"] = n.FindingStatus
 		if n.FindingStatus == db.FindingPending {
 			m["verification_status"] = "pending_verification"
-		} else if n.FindingStatus == db.FindingConfirmed || n.FindingStatus == db.FindingResolved || n.FindingStatus == db.FindingFixed || n.FindingStatus == db.FindingInProgress || n.FindingStatus == db.FindingRiskAccepted {
+		} else if n.FindingStatus == db.FindingInProgress {
+			m["verification_status"] = "in_review"
+		} else if n.FindingStatus == db.FindingConfirmed || n.FindingStatus == db.FindingResolved || n.FindingStatus == db.FindingFixed || n.FindingStatus == db.FindingRiskAccepted {
 			m["verification_status"] = "confirmed"
 		} else {
 			m["verification_status"] = "not_confirmed"

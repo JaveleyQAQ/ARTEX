@@ -160,6 +160,9 @@ func (s *Server) reviewFindingCandidate(ctx context.Context, runtime *taskLLMRun
 	if err != nil {
 		return err
 	}
+	if err := validateFindingVerifierEvidence(output, finding.Evidence); err != nil {
+		return err
+	}
 	evidence, err := json.Marshal(output.Evidence)
 	if err != nil {
 		return err
@@ -203,3 +206,19 @@ func parseFindingVerifierOutput(raw string) (*findingVerifierOutput, error) {
 	}
 	return &output, nil
 }
+
+func validateFindingVerifierEvidence(output *findingVerifierOutput, sourceEvidence string) error {
+	if output == nil {
+		return errors.New("verifier output is nil")
+	}
+	if output.Verdict != db.FindingVerdictInconclusive && strings.TrimSpace(sourceEvidence) == "" {
+		return errors.New("a conclusive verdict requires stored candidate evidence")
+	}
+	for i, item := range output.Evidence {
+		if !strings.Contains(sourceEvidence, item.Quote) {
+			return fmt.Errorf("evidence item %d quote is not present in the stored candidate evidence", i)
+		}
+	}
+	return nil
+}
+

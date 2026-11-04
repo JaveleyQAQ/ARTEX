@@ -37,3 +37,20 @@ func TestFindingVerifierPromptTreatsEvidenceAsUntrusted(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateFindingVerifierEvidenceRejectsFabricatedQuotes(t *testing.T) {
+	output := &findingVerifierOutput{
+		Verdict: db.FindingVerdictConfirmed,
+		Summary: "证据支持",
+		Evidence: []findingVerifierEvidence{{Quote: "HTTP/1.1 200 OK", Reason: "响应状态"}},
+	}
+	if err := validateFindingVerifierEvidence(output, "Observed response: HTTP/1.1 200 OK"); err != nil {
+		t.Fatalf("valid quoted evidence rejected: %v", err)
+	}
+	if err := validateFindingVerifierEvidence(output, "Observed response: HTTP/1.1 404 Not Found"); err == nil {
+		t.Fatal("fabricated evidence quote must be rejected")
+	}
+	if err := validateFindingVerifierEvidence(output, ""); err == nil {
+		t.Fatal("conclusive verdict without stored evidence must be rejected")
+	}
+}
