@@ -1261,11 +1261,28 @@ func (t *ToolSet) goalMet() actool.CoreTool {
 
 // --- worker write tools ---
 
+// findingVerificationReadiness is deliberately not a vulnerability verdict. It
+// reports whether a submission has the minimum provenance needed for a later,
+// independent review; only a verifier/reviewer may confirm the finding.
+func findingVerificationReadiness(evidence string, intentValid bool) (string, string) {
+	missing := []string{}
+	if strings.TrimSpace(evidence) == "" {
+		missing = append(missing, "缺少本次实际观察到的证据")
+	}
+	if !intentValid {
+		missing = append(missing, "未关联有效的本任务意图")
+	}
+	if len(missing) > 0 {
+		return "review_required", strings.Join(missing, "；") + "。该记录不得视为已独立验证。"
+	}
+	return "pending_independent_review", "已提交证据和意图来源，但尚未经过独立验证；不得仅凭本次上报标记为已确认。"
+}
+
 func (t *ToolSet) addFinding() actool.CoreTool {
-	return writeTool("report_finding", "记录确认的漏洞，用 evidence 提供命令输出、日志等可验证证据。任务上下文传当前 intent_id。返回的 finding_id 是独立漏洞记录 ID，finding_node_id 是探索节点 ID（第一行保留该节点编号）。", obj(map[string]any{
+	return writeTool("report_finding", "提交漏洞候选记录。必须提供本次实际观察到的 evidence；系统会检查严重等级和意图来源。提交成功不等于独立验证通过，仍需报告/复核流程确认。返回的 finding_id 是独立漏洞记录 ID，finding_node_id 是探索节点 ID（第一行保留该节点编号）。", obj(map[string]any{
 		"vulnclass": str("漏洞类别"), "name": str("漏洞名称"), "severity": str("critical|high|medium|low"), "summary": str("发现摘要"),
 		"intent_id": idp("当前任务的意图 id"), "asset_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "受影响资产 id"},
-		"evidence":         str("证据/PoC 文本"),
+		"evidence":         str("本次实际观察到的证据/PoC 文本；记录请求与响应、命令及关键输出或日志。缺失时会标记为待复核，不能视为已确认。"),
 		"evidence_hint_id": idp("可选：本任务中对应此漏洞的提示节点 ID，自动携带其结构化 traffic_refs；不能引用继承提示或其他漏洞的提示"),
 		"traffic_refs": map[string]any{"type": "array", "description": "可选；HTTP/HTTPS 漏洞先检索并逐条核实请求/响应确实支持漏洞结论，再按复现顺序填写真实 ID。TCP 等非 HTTP 漏洞、未采集或找不到确切记录时省略或传 []，不阻止上报；可在 evidence 说明原因并提供其他可验证证据。不要猜测 ID、按域名/时间推定关联或仅为补包重复探测。用途 baseline 正常对照 / proof 漏洞证明 / verification 补充验证 / supporting 辅助证据。",
 			"items": obj(map[string]any{"traffic_id": str("traffic_search 返回的真实流量 ID"), "role": map[string]any{"type": "string", "enum": []string{"baseline", "proof", "verification", "supporting"}}, "note": str("该流量如何支持漏洞结论")}, "traffic_id")},
@@ -1283,6 +1300,19 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 		if t.ts == nil {
 			return actool.Errorf("report_finding 需要任务上下文；平台对话请通过 add_task_hint 向对应任务交接漏洞，并在提示中携带已有的 traffic_refs，由任务 Agent 登记。已登记漏洞可用 bind_finding_traffic 补绑。"), nil
 		}
+		a.Severity = strings.ToLower(strings.TrimSpace(a.Severity))
+		if !db.ValidSeverity(a.Severity) {
+			return actool.Errorf("severity 必须是 critical、high、medium 或 low"), nil
+		}
+		intentID := pid(a.IntentID)
+		intentValid := false
+		if intentID > 0 {
+			intentNode, getErr := t.ts.GetNode(intentID)
+			if getErr != nil || intentNode == nil || intentNode.Kind != db.KindIntent {
+				return actool.Errorf("intent_id 必须是本任务中的有效意图节点；不得引用其他任务或其他类型节点"), nil
+			}
+			intentValid = true
+		}
 		// Auto-binding off: ignore the evidence params instead of rejecting the call.
 		// stripTrafficParameters already removes them from the advertised schema, but
 		// models routinely emit fields anyway — failing here would discard a confirmed
@@ -1298,7 +1328,7 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 		if err != nil {
 			return actool.Errorf(err.Error()), nil
 		}
-		input := db.RecordFindingInput{TaskID: t.taskID, ExplorationID: t.ts.ID(), IntentID: pid(a.IntentID), VulnClass: a.VulnClass, Name: a.Name, Severity: a.Severity, Summary: a.Summary, Evidence: a.Evidence, Worker: t.worker, AssetIDs: pidList(a.AssetIDs)}
+		input := db.RecordFindingInput{TaskID: t.taskID, ExplorationID: t.ts.ID(), IntentID: intentID, VulnClass: a.VulnClass, Name: a.Name, Severity: a.Severity, Summary: a.Summary, Evidence: a.Evidence, Worker: t.worker, AssetIDs: pidList(a.AssetIDs)}
 		var recorded *db.RecordedFinding
 		if t.findingRecorder != nil {
 			recorded, err = t.findingRecorder.Record(ctx, input, refs)
@@ -1325,11 +1355,14 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 			recorded.Traffic.Bindings[i].Snapshot.ReqHead = ""
 			recorded.Traffic.Bindings[i].Snapshot.RespHead = ""
 		}
+		verificationStatus, verificationNote := findingVerificationReadiness(a.Evidence, intentValid)
 		result := struct {
 			*db.RecordedFinding
-			EvidenceStatus string `json:"evidence_status"`
-			EvidenceNote   string `json:"evidence_note,omitempty"`
-		}{RecordedFinding: recorded, EvidenceStatus: "bound"}
+			EvidenceStatus     string `json:"evidence_status"`
+			EvidenceNote       string `json:"evidence_note,omitempty"`
+			VerificationStatus string `json:"verification_status"`
+			VerificationNote   string `json:"verification_note"`
+		}{RecordedFinding: recorded, EvidenceStatus: "bound", VerificationStatus: verificationStatus, VerificationNote: verificationNote}
 		if len(recorded.Traffic.Bindings) == 0 {
 			result.EvidenceStatus = "not_bound"
 			result.EvidenceNote = "漏洞已保存，未绑定流量。TCP/无包情形可正常继续；若已有核实的 HTTP 流量，请用可用的 bind_finding_traffic 或漏洞页面补绑，再完成证据交接。不要重复创建漏洞。"

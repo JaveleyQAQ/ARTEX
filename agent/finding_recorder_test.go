@@ -106,3 +106,78 @@ func TestReportFindingAtomicContract(t *testing.T) {
 		t.Fatal("failed tool triggered reporter")
 	}
 }
+
+
+func TestFindingVerificationReadinessNeverClaimsIndependentVerification(t *testing.T) {
+	tests := []struct {
+		name        string
+		evidence    string
+		intentValid bool
+		want        string
+	}{
+		{name: "no evidence", intentValid: true, want: "review_required"},
+		{name: "no intent provenance", evidence: "observed response", want: "review_required"},
+		{name: "evidence and intent", evidence: "observed response", intentValid: true, want: "pending_independent_review"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, note := findingVerificationReadiness(tt.evidence, tt.intentValid)
+			if got != tt.want {
+				t.Fatalf("status = %q, want %q", got, tt.want)
+			}
+			if strings.Contains(strings.ToLower(note), "verified") && got != "pending_independent_review" {
+				t.Fatalf("review-required note must not imply verification: %q", note)
+			}
+			if got == "pending_independent_review" && !strings.Contains(note, "尚未经过独立验证") {
+				t.Fatalf("pending status must explicitly require independent review: %q", note)
+			}
+		})
+	}
+}
+
+func TestReportFindingValidatesSeverityAndIntentProvenance(t *testing.T) {
+	d := testDB(t)
+	defer d.Close()
+	task, err := d.CreateTask("finding validation", "fixture", nil, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.DeleteTask(task.ID)
+	store := d.Exploration(task.ExplorationID)
+	intentID, err := store.AddIntent(map[string]any{"summary": "local fixture intent"}, 5, nil, "planner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := NewToolSet(store, "fixture")
+	ts.SetTaskID(task.ID)
+
+	call := func(body string) string {
+		t.Helper()
+		res, err := ts.addFinding().Call(t.Context(), json.RawMessage(body), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res.Flatten()
+	}
+	if got := call(`{"vulnclass":"TEST","summary":"bad severity","severity":"urgent","evidence":"observed"}`); !strings.Contains(got, "severity 必须") {
+		t.Fatalf("invalid severity was accepted: %s", got)
+	}
+	if got := call(fmt.Sprintf(`{"vulnclass":"TEST","summary":"foreign intent","severity":"low","intent_id":%d,"evidence":"observed"}`, intentID+999999)); !strings.Contains(got, "有效意图节点") {
+		t.Fatalf("invalid intent provenance was accepted: %s", got)
+	}
+	got := call(fmt.Sprintf(`{"vulnclass":"TEST","summary":"candidate","severity":" LOW ","intent_id":%d,"evidence":"Observed response: fixture marker"}`, intentID))
+	lines := strings.SplitN(got, "\n", 2)
+	if len(lines) != 2 {
+		t.Fatalf("finding was not recorded: %s", got)
+	}
+	var result struct {
+		VerificationStatus string `json:"verification_status"`
+		VerificationNote   string `json:"verification_note"`
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.VerificationStatus != "pending_independent_review" || !strings.Contains(result.VerificationNote, "尚未经过独立验证") {
+		t.Fatalf("submission was incorrectly treated as verified: %+v", result)
+	}
+}
