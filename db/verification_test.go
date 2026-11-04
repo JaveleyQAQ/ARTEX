@@ -8,7 +8,9 @@ import (
 )
 
 func TestFindingVerificationLifecycle(t *testing.T) {
- d:=testDB(t); defer d.Close()
+ d, err := Open(testDSN(t))
+	if err != nil { t.Skipf("postgres unavailable: %v", err) }
+	defer d.Close()
  task,err:=d.CreateTask("verification lifecycle","fixture",nil,0,0); if err!=nil{t.Fatal(err)}; defer d.DeleteTask(task.ID)
  store:=d.Exploration(task.ExplorationID)
  intentID,err:=store.AddIntent(map[string]any{"summary":"fixture intent"},5,nil,"planner");if err!=nil{t.Fatal(err)}
@@ -38,7 +40,8 @@ func TestFindingVerificationLifecycle(t *testing.T) {
 }
 
 func TestRequeueStaleFindingVerificationRuns(t *testing.T) {
-	d := testDB(t)
+	d, err := Open(testDSN(t))
+	if err != nil { t.Skipf("postgres unavailable: %v", err) }
 	defer d.Close()
 	task, err := d.CreateTask("stale verification", "fixture", nil, 0, 0)
 	if err != nil {
