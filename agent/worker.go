@@ -314,7 +314,50 @@ func intentAssetIDs(intent *db.Node) []int64 {
 }
 
 func renderIntentTask(intent *db.Node) string {
-	return fmt.Sprintf("\n\n【你领到的意图（本次唯一任务：只做这一条、只产生事实、做完即停）】：\n%s\n意图 id: %d（写回 record_fact / report_finding 时传它）", string(intent.Payload), intent.ID)
+	return fmt.Sprintf("\n\n【你领到的意图（本次唯一任务：只做这一条、只产生事实、做完即停）】：\n%s%s\n意图 id: %d（写回 record_fact / report_finding 时传它）",
+		string(intent.Payload), renderIntentHypothesisContract(intent), intent.ID)
+}
+
+// renderIntentHypothesisContract turns the optional structured planning fields
+// into an explicit worker-side execution contract. The original payload remains
+// visible for compatibility and traceability; this block makes the falsifiable
+// hypothesis, evidence bar, and stop conditions hard to miss in long runs.
+func renderIntentHypothesisContract(intent *db.Node) string {
+	if intent == nil || len(intent.Payload) == 0 {
+		return ""
+	}
+	var contract struct {
+		Hypothesis          string `json:"hypothesis"`
+		ExpectedObservation string `json:"expected_observation"`
+		SuccessCriteria     string `json:"success_criteria"`
+		StopConditions      string `json:"stop_conditions"`
+	}
+	if err := json.Unmarshal(intent.Payload, &contract); err != nil {
+		return ""
+	}
+	if strings.TrimSpace(contract.Hypothesis) == "" &&
+		strings.TrimSpace(contract.ExpectedObservation) == "" &&
+		strings.TrimSpace(contract.SuccessCriteria) == "" &&
+		strings.TrimSpace(contract.StopConditions) == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("\n\n【本意图的假设验证契约】")
+	if v := strings.TrimSpace(contract.Hypothesis); v != "" {
+		fmt.Fprintf(&b, "\n- 待验证假设：%s", v)
+	}
+	if v := strings.TrimSpace(contract.ExpectedObservation); v != "" {
+		fmt.Fprintf(&b, "\n- 预期观察：%s", v)
+	}
+	if v := strings.TrimSpace(contract.SuccessCriteria); v != "" {
+		fmt.Fprintf(&b, "\n- 证据验收标准：%s", v)
+	}
+	if v := strings.TrimSpace(contract.StopConditions); v != "" {
+		fmt.Fprintf(&b, "\n- 停止条件：%s", v)
+	}
+	b.WriteString("\n执行纪律：假设不是事实；只根据本次工具实际返回记录观察。结论须区分 observed（直接观察）与 inferred（推断），并在 record_fact 的 evidence 中保留足以复核的关键证据。未达到验收标准时不得把假设升级为已确认漏洞；触发停止条件或超出任务授权范围时立即停止并如实交接。")
+	return b.String()
 }
 
 // renderWorkerGraphOverview folds the global situational snapshot into the worker's
