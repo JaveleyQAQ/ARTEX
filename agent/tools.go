@@ -443,15 +443,25 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 	// via node_detail(id).
 	vulnNodes, _ := t.ts.ListByKind(db.KindFinding, 1000)
 	factNodes, _ := t.ts.ListByKind(db.KindFact, 1000) // newest first
-	out["findings_total"] = len(vulnNodes)             // 确认漏洞总数（目标判定看它）；明细见 finding_list（最新一窗）
-	out["facts"] = len(factNodes)                      // 探索事实/结论数（含否定结论）
+	confirmedFindings := make([]*db.Node, 0, len(vulnNodes))
+	pendingFindings := make([]*db.Node, 0)
+	for _, n := range vulnNodes {
+		if n.State == "confirmed" {
+			confirmedFindings = append(confirmedFindings, n)
+		} else if n.State == "pending_verification" {
+			pendingFindings = append(pendingFindings, n)
+		}
+	}
+	out["findings_total"] = len(confirmedFindings) // 仅独立验证通过的漏洞参与目标完成判定
+	out["pending_verification_total"] = len(pendingFindings)
+	out["facts"] = len(factNodes) // 探索事实/结论数（含否定结论）
 	// findings 是任务里最高价值的产物 → 概览带最新一窗（≤10 条，vulnNodes 已按 id 降序即最新在前），
 	// 让 planner 每轮判目标时一眼看到最近确认的漏洞；全量/更早的用 list_findings 取。
 	// 每条只留 {id, summary, from_intent?}：from_intent 是产生本漏洞的意图。
 	// evidence/assets/vulnclass/severity/state 等仍可用 list_findings / node_detail(id) 取。
 	const findingListCap = 10
 	findingList := make([]map[string]any, 0, findingListCap)
-	for _, n := range vulnNodes {
+	for _, n := range confirmedFindings {
 		if len(findingList) >= findingListCap {
 			break
 		}
@@ -464,6 +474,14 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 		findingList = append(findingList, m)
 	}
 	out["finding_list"] = findingList
+	pendingList := make([]map[string]any, 0, findingListCap)
+	for _, n := range pendingFindings {
+		if len(pendingList) >= findingListCap { break }
+		var fp map[string]any
+		_ = json.Unmarshal(n.Payload, &fp)
+		pendingList = append(pendingList, map[string]any{"id": n.ID, "summary": fp["summary"], "state": n.State})
+	}
+	out["pending_verification_list"] = pendingList
 	// recent_facts：非折叠事实里最新的一窗（≤N，factNodes 按 id 降序即最新在前）。已折进
 	// digest 且仍冷的（hidden）走 cold_digests，不在此重复。每条 {id, summary, from_intent?,
 	// confidence?}；evidence 等详情用 node_detail(id)。更早的用 list_facts 翻。

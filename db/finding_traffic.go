@@ -364,7 +364,7 @@ func RecordFindingTx(ctx context.Context, tx *sql.Tx, in RecordFindingInput, pre
 	payload, _ := json.Marshal(map[string]any{"vulnclass": in.VulnClass, "name": in.Name, "severity": in.Severity, "summary": in.Summary, "evidence": map[string]any{"by": in.Worker, "poc": in.Evidence}})
 	out := &RecordedFinding{}
 	if err := tx.QueryRow(`INSERT INTO exploration_nodes(exploration_id,kind,payload,priority,state,origin)
-VALUES($1,'finding',$2,9,'confirmed',$3) RETURNING id`, in.ExplorationID, string(payload), in.Worker).Scan(&out.NodeID); err != nil {
+VALUES($1,'finding',$2,9,'pending_verification',$3) RETURNING id`, in.ExplorationID, string(payload), in.Worker).Scan(&out.NodeID); err != nil {
 		return nil, err
 	}
 	for _, asset := range in.AssetIDs {
@@ -384,6 +384,11 @@ VALUES($1,'finding',$2,9,'confirmed',$3) RETURNING id`, in.ExplorationID, string
 	raw, _ := json.Marshal(assets)
 	if err := tx.QueryRow(`INSERT INTO findings(task_id,node_id,vulnclass,name,severity,summary,evidence,worker,asset_ids)
 VALUES(NULLIF($1,0),$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`, in.TaskID, out.NodeID, in.VulnClass, in.Name, in.Severity, in.Summary, in.Evidence, in.Worker, string(raw)).Scan(&out.FindingID); err != nil {
+		return nil, err
+	}
+	// Create the independent-review work item atomically with the candidate.
+	if _, err := tx.Exec(`INSERT INTO finding_verification_runs(finding_id,task_id,intent_id,status,evidence)
+VALUES($1,NULLIF($2,0),NULLIF($3,0),'pending',jsonb_build_array(jsonb_build_object('kind','candidate_submission','text',$4,'worker',$5)))`, out.FindingID, in.TaskID, in.IntentID, in.Evidence, in.Worker); err != nil {
 		return nil, err
 	}
 	// 在**同一事务**里登记一条推送事件：提交即保证「漏洞落库」与「推送任务存在」
