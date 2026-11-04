@@ -18,7 +18,7 @@ import (
 
 const findingVerifierIdentity = "artex-readonly-verifier"
 
-var verifierSecretPattern = regexp.MustCompile("(?i)(authorization\\s*:\\s*(?:bearer|basic)\\s+[^\\r\\n]+|(?:set-cookie|cookie)\\s*:\\s*[^\\r\\n]+|\"?(?:password|passwd|secret|access_token|refresh_token|api[_-]?key|token)\"?\\s*[:=]\\s*\"?[^\"\\s&;,}]+)")
+var verifierSecretPattern = regexp.MustCompile("(?i)(\"?authorization\"?\\s*:\\s*\"?(?:bearer|basic)\\s+[^\"\\r\\n,}]+|\"?(?:set-cookie|cookie)\"?\\s*:\\s*\"?[^\"\\r\\n,}]+|\"?(?:password|passwd|secret|access_token|refresh_token|api[_-]?key|token)\"?\\s*[:=]\\s*\"?[^\"\\s&;,}]+)")
 
 const findingVerifierSystemPrompt = `你是 ARTEX 的独立漏洞证据复核器。你的职责是审查已提交的候选漏洞及其证据，不是执行渗透测试。
 
@@ -44,7 +44,7 @@ type findingVerifierInput struct {
 	Summary   string          `json:"summary"`
 	Evidence  string          `json:"evidence"`
 	Worker    string          `json:"worker"`
-	Intent    json.RawMessage `json:"intent,omitempty"`
+	Intent    string          `json:"intent,omitempty"`
 }
 
 type findingVerifierEvidence struct {
@@ -134,13 +134,13 @@ func (s *Server) reviewFindingCandidate(ctx context.Context, runtime *taskLLMRun
 	}
 	input := findingVerifierInput{
 		FindingID: finding.ID, TaskID: finding.TaskID, IntentID: run.IntentID,
-		VulnClass: finding.VulnClass, Name: finding.Name, Severity: finding.Severity,
-		Summary: trunc(finding.Summary, 3000), Evidence: redactVerifierEvidence(trunc(finding.Evidence, 12000)), Worker: finding.Worker,
+		VulnClass: finding.VulnClass, Name: redactVerifierEvidence(trunc(finding.Name, 500)), Severity: finding.Severity,
+		Summary: redactVerifierEvidence(trunc(finding.Summary, 3000)), Evidence: redactVerifierEvidence(trunc(finding.Evidence, 12000)), Worker: finding.Worker,
 	}
 	if run.IntentID != nil && finding.TaskID != nil {
 		if task, ok := s.m.Task(strconv.FormatInt(*finding.TaskID, 10)); ok && task.Store != nil {
 			if node, getErr := task.Store.GetNode(*run.IntentID); getErr == nil && node != nil && node.Kind == db.KindIntent {
-				input.Intent = node.Payload
+				input.Intent = redactVerifierEvidence(trunc(string(node.Payload), 6000))
 			}
 		}
 	}
@@ -281,12 +281,12 @@ func (s *Server) retryFindingVerification(w http.ResponseWriter, r *http.Request
 func redactVerifierEvidence(value string) string {
 	return verifierSecretPattern.ReplaceAllStringFunc(value, func(match string) string {
 		lower := strings.ToLower(strings.TrimSpace(match))
-		if strings.HasPrefix(lower, "authorization:") {
+		if strings.Contains(lower, "authorization") {
 			if i := strings.Index(match, ":"); i >= 0 {
 				return match[:i+1] + " <redacted>"
 			}
 		}
-		if strings.HasPrefix(lower, "cookie:") || strings.HasPrefix(lower, "set-cookie:") {
+		if strings.Contains(lower, "cookie") {
 			if i := strings.Index(match, ":"); i >= 0 {
 				return match[:i+1] + " <redacted>"
 			}

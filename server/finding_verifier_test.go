@@ -58,7 +58,7 @@ func TestValidateFindingVerifierEvidenceRejectsFabricatedQuotes(t *testing.T) {
 func TestRedactVerifierEvidenceMasksSecrets(t *testing.T) {
 	input := "Authorization: Bearer abc123\nCookie: session=secret\npassword=supersecret api_key=\"key-value\""
 	got := redactVerifierEvidence(input)
-	for _, secret := range []string{"abc123", "session=secret", "supersecret", "key-value"} {
+	for _, secret := range []string{"abc123", "session=secret", "supersecret", "key-value", "json-secret"} {
 		if strings.Contains(got, secret) {
 			t.Fatalf("secret %q was not redacted: %s", secret, got)
 		}
