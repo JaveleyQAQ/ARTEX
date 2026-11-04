@@ -194,9 +194,9 @@ RETURNING finding_id`, runID, verifier, verdict, summary, string(evidence)).Scan
 	}
 
 	if verdict == FindingVerdictConfirmed || verdict == FindingVerdictRejected {
-		findingStatus, nodeState := FindingConfirmed, "confirmed"
+		findingStatus := FindingConfirmed
 		if verdict == FindingVerdictRejected {
-			findingStatus, nodeState = FindingFalsePositive, "dismissed"
+			findingStatus = FindingFalsePositive
 		}
 		result, updateErr := tx.ExecContext(ctx, `UPDATE findings SET status=$2 WHERE id=$1 AND status='pending'`, findingID, findingStatus)
 		if updateErr != nil {
