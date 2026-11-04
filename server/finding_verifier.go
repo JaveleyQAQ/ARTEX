@@ -18,7 +18,7 @@ import (
 
 const findingVerifierIdentity = "artex-readonly-verifier"
 
-var verifierSecretPattern = regexp.MustCompile("(?i)(\"?authorization\"?\\s*:\\s*\"?(?:bearer|basic)\\s+[^\"\\r\\n,}]+|\"?(?:set-cookie|cookie)\"?\\s*:\\s*\"?[^\"\\r\\n,}]+|\"?(?:password|passwd|secret|access_token|refresh_token|api[_-]?key|token)\"?\\s*[:=]\\s*\"?[^\"\\s&;,}]+)")
+var verifierSecretPattern = regexp.MustCompile("(?i)(\"?authorization\"?\\s*:\\s*\"?(bearer|basic)\\s+[^\"\\r\\n,}]+|\"?(set-cookie|cookie)\"?\\s*:\\s*\"?[^\"\\r\\n,}]+|\"?(password|passwd|secret|access_token|refresh_token|api[_-]?key|token)\"?\\s*[:=]\\s*\"?[^\"\\s&;,}]+)")
 
 const findingVerifierSystemPrompt = `你是 ARTEX 的独立漏洞证据复核器。你的职责是审查已提交的候选漏洞及其证据，不是执行渗透测试。
 
