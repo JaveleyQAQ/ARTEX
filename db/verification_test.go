@@ -16,7 +16,7 @@ func openVerificationTestDB(t *testing.T) *DB {
 	return d
 }
 
-func createVerificationCandidate(t *testing.T, d *DB, title string) (*Task, *ExplorationStore, *RecordedFinding) {
+func createVerificationCandidate(t *testing.T, d *DB, title string) (*ExplorationStore, *RecordedFinding, func()) {
 	t.Helper()
 	task, err := d.CreateTask(title, "fixture", nil, 0, 0)
 	if err != nil {
@@ -31,17 +31,18 @@ func createVerificationCandidate(t *testing.T, d *DB, title string) (*Task, *Exp
 		_ = d.DeleteTask(task.ID)
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
+	cleanup := func() {
 		_, _ = d.DeleteFinding(recorded.FindingID)
 		_ = d.DeleteTask(task.ID)
-	})
-	return task, store, recorded
+	}
+	return store, recorded, cleanup
 }
 
 func TestFindingVerificationLifecycle(t *testing.T) {
 	d := openVerificationTestDB(t)
 	defer d.Close()
-	task, store, recorded := createVerificationCandidate(t, d, "verification lifecycle")
+	store, recorded, cleanup := createVerificationCandidate(t, d, "verification lifecycle")
+	defer cleanup()
 
 	node, err := store.GetNode(recorded.NodeID)
 	if err != nil || node == nil || node.State != "confirmed" {
@@ -106,13 +107,13 @@ func TestFindingVerificationLifecycle(t *testing.T) {
 	if err != nil || len(confirmedIDs) != 1 || confirmedIDs[0] != recorded.NodeID || len(pendingIDs) != 0 {
 		t.Fatalf("confirmed overview confirmed=%v pending=%v err=%v", confirmedIDs, pendingIDs, err)
 	}
-	_ = task
 }
 
 func TestRequeueStaleFindingVerificationRuns(t *testing.T) {
 	d := openVerificationTestDB(t)
 	defer d.Close()
-	_, _, recorded := createVerificationCandidate(t, d, "stale verification")
+	_, recorded, cleanup := createVerificationCandidate(t, d, "stale verification")
+	defer cleanup()
 	runs, err := d.ListFindingVerificationRuns(t.Context(), recorded.FindingID)
 	if err != nil || len(runs) != 1 {
 		t.Fatalf("runs=%+v err=%v", runs, err)
@@ -136,7 +137,8 @@ func TestRequeueStaleFindingVerificationRuns(t *testing.T) {
 func TestRejectedFindingVerificationKeepsHumanTriagePending(t *testing.T) {
 	d := openVerificationTestDB(t)
 	defer d.Close()
-	_, store, recorded := createVerificationCandidate(t, d, "rejected verification")
+	store, recorded, cleanup := createVerificationCandidate(t, d, "rejected verification")
+	defer cleanup()
 	runs, err := d.ListFindingVerificationRuns(t.Context(), recorded.FindingID)
 	if err != nil || len(runs) != 1 {
 		t.Fatalf("runs=%+v err=%v", runs, err)
@@ -169,7 +171,8 @@ func TestRejectedFindingVerificationKeepsHumanTriagePending(t *testing.T) {
 func TestQueueFindingVerificationRunAllowsOnlyPendingWithoutActiveRun(t *testing.T) {
 	d := openVerificationTestDB(t)
 	defer d.Close()
-	_, _, recorded := createVerificationCandidate(t, d, "manual retry")
+	_, recorded, cleanup := createVerificationCandidate(t, d, "manual retry")
+	defer cleanup()
 	if _, err := d.QueueFindingVerificationRun(t.Context(), recorded.FindingID); !errors.Is(err, ErrFindingNotReviewable) {
 		t.Fatalf("active run must block duplicate queueing, got %v", err)
 	}
