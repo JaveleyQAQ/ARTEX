@@ -237,20 +237,28 @@ func (d *DB) ListFindingVerificationRuns(ctx context.Context, findingID int64) (
 // a verification signal because legacy nodes predate this lifecycle.
 func (s *ExplorationStore) FindingVerificationOverview() (confirmed, pending []int64, err error) {
 	rows, err := s.db.Query(`
-SELECT f.node_id, f.status
-FROM findings f
-JOIN exploration_nodes en ON en.id=f.node_id
-WHERE en.exploration_id=$1
-ORDER BY f.id DESC`, s.expID)
+SELECT en.id, en.state, COALESCE(f.status,'')
+FROM exploration_nodes en
+LEFT JOIN findings f ON f.node_id=en.id
+WHERE en.exploration_id=$1 AND en.kind='finding'
+ORDER BY en.id DESC`, s.expID)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var nodeID int64
-		var status string
-		if err := rows.Scan(&nodeID, &status); err != nil {
+		var nodeState, status string
+		if err := rows.Scan(&nodeID, &nodeState, &status); err != nil {
 			return nil, nil, err
+		}
+		// Legacy graph-only findings have no standalone row. Preserve their old
+		// confirmed semantics; new candidates always have a findings row/status.
+		if status == "" {
+			if nodeState == "confirmed" {
+				confirmed = append(confirmed, nodeID)
+			}
+			continue
 		}
 		switch status {
 		case FindingConfirmed, FindingResolved, FindingFixed, FindingRiskAccepted:

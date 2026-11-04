@@ -388,7 +388,7 @@ VALUES(NULLIF($1,0),$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`, in.TaskID, out.NodeI
 	}
 	// Create the independent-review work item atomically with the candidate.
 	if _, err := tx.Exec(`INSERT INTO finding_verification_runs(finding_id,task_id,intent_id,status,evidence)
-VALUES($1,NULLIF($2,0),NULLIF($3,0),'pending',jsonb_build_array(jsonb_build_object('kind','candidate_submission','text',$4,'worker',$5)))`, out.FindingID, in.TaskID, in.IntentID, in.Evidence, in.Worker); err != nil {
+VALUES($1,NULLIF($2::bigint,0),NULLIF($3::bigint,0),'pending',jsonb_build_array(jsonb_build_object('kind','candidate_submission','text',$4::text,'worker',$5::text)))`, out.FindingID, in.TaskID, in.IntentID, in.Evidence, in.Worker); err != nil {
 		return nil, err
 	}
 	// 在**同一事务**里登记一条推送事件：提交即保证「漏洞落库」与「推送任务存在」
