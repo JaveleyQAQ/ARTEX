@@ -81,3 +81,50 @@ func TestRequeueStaleFindingVerificationRuns(t *testing.T) {
 		t.Fatalf("recovered run=%+v err=%v", recovered, err)
 	}
 }
+
+
+func TestRejectedFindingVerificationDismissesCandidate(t *testing.T) {
+	d, err := Open(testDSN(t))
+	if err != nil {
+		t.Skipf("postgres unavailable: %v", err)
+	}
+	defer d.Close()
+	task, err := d.CreateTask("rejected verification", "fixture", nil, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.DeleteTask(task.ID)
+	store := d.Exploration(task.ExplorationID)
+	recorded, err := store.RecordFinding(t.Context(), RecordFindingInput{
+		TaskID: task.ID, VulnClass: "TEST", Severity: SeverityLow,
+		Summary: "rejected candidate", Evidence: "contradictory fixture evidence", Worker: "worker",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs, err := d.ListFindingVerificationRuns(t.Context(), recorded.FindingID)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("runs=%+v err=%v", runs, err)
+	}
+	run, err := d.ClaimFindingVerificationRun(t.Context(), runs[0].ID, "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CompleteFindingVerificationRun(t.Context(), run.ID, "reviewer",
+		FindingVerdictRejected, "证据直接反证候选主张",
+		json.RawMessage(`[{"quote":"contradictory fixture evidence","reason":"与候选主张相矛盾"}]`)); err != nil {
+		t.Fatal(err)
+	}
+	finding, err := d.GetFinding(recorded.FindingID)
+	if err != nil || finding.Status != FindingFalsePositive {
+		t.Fatalf("rejected finding=%+v err=%v", finding, err)
+	}
+	node, err := store.GetNode(recorded.NodeID)
+	if err != nil || node.State != "dismissed" {
+		t.Fatalf("rejected node=%+v err=%v", node, err)
+	}
+	confirmed, pending, err := store.FindingVerificationOverview()
+	if err != nil || len(confirmed) != 0 || len(pending) != 0 {
+		t.Fatalf("rejected overview confirmed=%v pending=%v err=%v", confirmed, pending, err)
+	}
+}

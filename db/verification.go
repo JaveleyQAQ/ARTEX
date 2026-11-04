@@ -198,13 +198,23 @@ RETURNING finding_id`, runID, verifier, verdict, summary, string(evidence)).Scan
 		if verdict == FindingVerdictRejected {
 			findingStatus, nodeState = FindingFalsePositive, "dismissed"
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE findings SET status=$2 WHERE id=$1 AND status='pending'`, findingID, findingStatus); err != nil {
-			return nil, err
+		result, updateErr := tx.ExecContext(ctx, `UPDATE findings SET status=$2 WHERE id=$1 AND status='pending'`, findingID, findingStatus)
+		if updateErr != nil {
+			return nil, updateErr
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE exploration_nodes
-SET state=$2
-WHERE id=(SELECT node_id FROM findings WHERE id=$1) AND state='pending_verification'`, findingID, nodeState); err != nil {
-			return nil, err
+		updated, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return nil, rowsErr
+		}
+		// The graph node starts in its legacy-compatible "confirmed" state.
+		// Only a rejected candidate is transitioned to the allowed "dismissed"
+		// graph state, and only if this verifier actually changed the pending row.
+		if updated > 0 && verdict == FindingVerdictRejected {
+			if _, err = tx.ExecContext(ctx, `UPDATE exploration_nodes
+SET state='dismissed'
+WHERE id=(SELECT node_id FROM findings WHERE id=$1) AND state='confirmed'`, findingID); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -245,8 +255,8 @@ func (s *ExplorationStore) FindingVerificationOverview() (confirmed, pending []i
 	rows, err := s.db.Query(`
 SELECT f.node_id, f.status
 FROM findings f
-JOIN tasks t ON t.id=f.task_id
-WHERE t.exploration_id=$1 AND f.node_id IS NOT NULL
+JOIN exploration_nodes en ON en.id=f.node_id
+WHERE en.exploration_id=$1
 ORDER BY f.id DESC`, s.expID)
 	if err != nil {
 		return nil, nil, err
@@ -259,9 +269,9 @@ ORDER BY f.id DESC`, s.expID)
 			return nil, nil, err
 		}
 		switch status {
-		case FindingConfirmed, FindingInProgress, FindingResolved, FindingFixed, FindingRiskAccepted:
+		case FindingConfirmed, FindingResolved, FindingFixed, FindingRiskAccepted:
 			confirmed = append(confirmed, nodeID)
-		case FindingPending:
+		case FindingPending, FindingInProgress:
 			pending = append(pending, nodeID)
 		}
 	}
