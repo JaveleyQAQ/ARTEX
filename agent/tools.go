@@ -443,7 +443,11 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 	// via node_detail(id).
 	vulnNodes, _ := t.ts.ListByKind(db.KindFinding, 1000)
 	factNodes, _ := t.ts.ListByKind(db.KindFact, 1000) // newest first
-	confirmedIDs, pendingIDs, _ := t.ts.FindingVerificationOverview()
+	confirmedIDs, pendingIDs, verificationErr := t.ts.FindingVerificationOverview()
+	if verificationErr != nil {
+		out["finding_verification_overview_error"] = true
+		confirmedIDs, pendingIDs = nil, nil // fail closed; do not infer confirmation from graph nodes
+	}
 	confirmedSet, pendingSet := map[int64]bool{}, map[int64]bool{}
 	for _, id := range confirmedIDs {
 		confirmedSet[id] = true

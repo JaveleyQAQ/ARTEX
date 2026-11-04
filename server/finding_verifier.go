@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,8 @@ import (
 )
 
 const findingVerifierIdentity = "artex-readonly-verifier"
+
+var verifierSecretPattern = regexp.MustCompile("(?i)(authorization\\s*:\\s*(?:bearer|basic)\\s+[^\\r\\n]+|(?:set-cookie|cookie)\\s*:\\s*[^\\r\\n]+|\"?(?:password|passwd|secret|access_token|refresh_token|api[_-]?key|token)\"?\\s*[:=]\\s*\"?[^\"\\s&;,}]+)")
 
 const findingVerifierSystemPrompt = `你是 ARTEX 的独立漏洞证据复核器。你的职责是审查已提交的候选漏洞及其证据，不是执行渗透测试。
 
@@ -132,7 +135,7 @@ func (s *Server) reviewFindingCandidate(ctx context.Context, runtime *taskLLMRun
 	input := findingVerifierInput{
 		FindingID: finding.ID, TaskID: finding.TaskID, IntentID: run.IntentID,
 		VulnClass: finding.VulnClass, Name: finding.Name, Severity: finding.Severity,
-		Summary: finding.Summary, Evidence: finding.Evidence, Worker: finding.Worker,
+		Summary: trunc(finding.Summary, 3000), Evidence: redactVerifierEvidence(trunc(finding.Evidence, 12000)), Worker: finding.Worker,
 	}
 	if run.IntentID != nil && finding.TaskID != nil {
 		if task, ok := s.m.Task(strconv.FormatInt(*finding.TaskID, 10)); ok && task.Store != nil {
@@ -161,7 +164,7 @@ func (s *Server) reviewFindingCandidate(ctx context.Context, runtime *taskLLMRun
 	if err != nil {
 		return err
 	}
-	if err := validateFindingVerifierEvidence(output, finding.Evidence); err != nil {
+	if err := validateFindingVerifierEvidence(output, input.Evidence); err != nil {
 		return err
 	}
 	evidence, err := json.Marshal(output.Evidence)
@@ -272,4 +275,25 @@ func (s *Server) retryFindingVerification(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"run": run})
+}
+
+
+func redactVerifierEvidence(value string) string {
+	return verifierSecretPattern.ReplaceAllStringFunc(value, func(match string) string {
+		lower := strings.ToLower(strings.TrimSpace(match))
+		if strings.HasPrefix(lower, "authorization:") {
+			if i := strings.Index(match, ":"); i >= 0 {
+				return match[:i+1] + " <redacted>"
+			}
+		}
+		if strings.HasPrefix(lower, "cookie:") || strings.HasPrefix(lower, "set-cookie:") {
+			if i := strings.Index(match, ":"); i >= 0 {
+				return match[:i+1] + " <redacted>"
+			}
+		}
+		if i := strings.IndexAny(match, "=:"); i >= 0 {
+			return match[:i+1] + "<redacted>"
+		}
+		return "<redacted>"
+	})
 }

@@ -54,3 +54,16 @@ func TestValidateFindingVerifierEvidenceRejectsFabricatedQuotes(t *testing.T) {
 		t.Fatal("conclusive verdict without stored evidence must be rejected")
 	}
 }
+
+func TestRedactVerifierEvidenceMasksSecrets(t *testing.T) {
+	input := "Authorization: Bearer abc123\nCookie: session=secret\npassword=supersecret api_key=\"key-value\""
+	got := redactVerifierEvidence(input)
+	for _, secret := range []string{"abc123", "session=secret", "supersecret", "key-value"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("secret %q was not redacted: %s", secret, got)
+		}
+	}
+	if !strings.Contains(got, "Authorization:") || !strings.Contains(got, "Cookie:") {
+		t.Fatalf("redaction removed useful evidence labels: %s", got)
+	}
+}
