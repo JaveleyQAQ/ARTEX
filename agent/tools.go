@@ -749,28 +749,67 @@ func (t *ToolSet) relatedTaskOverviews() []map[string]any {
 
 		facts, _ := ts.ListByKind(db.KindFact, relatedOverviewMaxFactsPerSource)
 		findings, _ := ts.ListByKind(db.KindFinding, relatedOverviewMaxFindingsPerTask)
+		_ = ts.PopulateFindingTrafficIDs(findings)
+		confirmedIDs, pendingIDs, verificationErr := ts.FindingVerificationOverview()
+		confirmedSet, pendingSet := map[int64]bool{}, map[int64]bool{}
+		for _, id := range confirmedIDs {
+			confirmedSet[id] = true
+		}
+		for _, id := range pendingIDs {
+			pendingSet[id] = true
+		}
+		verifiedFindings := make([]*db.Node, 0, len(findings))
+		pendingFindings := make([]*db.Node, 0)
+		for _, finding := range findings {
+			if confirmedSet[finding.ID] {
+				verifiedFindings = append(verifiedFindings, finding)
+			} else if pendingSet[finding.ID] {
+				pendingFindings = append(pendingFindings, finding)
+			}
+		}
 		intentNodes, _ := ts.ListByKind(db.KindIntent, 300)
 		terminalIntent := make(map[int64]bool, len(intentNodes))
 		for _, intent := range intentNodes {
 			terminalIntent[intent.ID] = inheritedIntentSummaryState(intent.State)
 		}
 		item["facts"] = len(facts)
-		item["findings"] = len(findings)
+		item["findings"] = len(confirmedIDs)
+		item["pending_verification"] = len(pendingIDs)
+		if verificationErr != nil {
+			item["finding_verification_overview_error"] = true
+			item["findings"] = 0 // fail closed: do not present unverified graph nodes as confirmed
+		}
 		if statsErr == nil {
 			item["facts"] = stats[db.KindFact]
-			item["findings"] = stats[db.KindFinding]
 			if stats[db.KindGoal] > len(goals) || stats[db.KindHint] > len(hints) ||
 				stats[db.KindFact] > len(facts) || stats[db.KindFinding] > len(findings) {
 				budget.truncated = true
 			}
+			statsView := make(map[string]int, len(stats)+1)
+			for key, value := range stats {
+				statsView[key] = value
+			}
+			statsView[db.KindFinding] = len(confirmedIDs)
+			statsView["pending_verification"] = len(pendingIDs)
+			if verificationErr != nil {
+				statsView[db.KindFinding] = 0
+			}
+			item["node_stats"] = statsView
 		}
-		recentFindings := make([]map[string]any, 0, len(findings))
-		for _, finding := range findings {
+		recentFindings := make([]map[string]any, 0, len(verifiedFindings))
+		for _, finding := range verifiedFindings {
 			entry := inheritedMap(compactFinding(finding), source.Task.TaskID)
 			entry["summary"] = budget.take(entry["summary"], 400)
 			recentFindings = append(recentFindings, entry)
 		}
 		item["recent_findings"] = recentFindings
+		pendingFindingList := make([]map[string]any, 0, len(pendingFindings))
+		for _, finding := range pendingFindings {
+			entry := inheritedMap(compactFinding(finding), source.Task.TaskID)
+			entry["summary"] = budget.take(entry["summary"], 400)
+			pendingFindingList = append(pendingFindingList, entry)
+		}
+		item["pending_verification_findings"] = pendingFindingList
 		recentFacts := make([]map[string]any, 0, len(facts))
 		for _, fact := range facts {
 			if hidden(fact.ID) {
