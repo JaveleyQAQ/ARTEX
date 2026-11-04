@@ -487,7 +487,7 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 		if len(pendingList) >= findingListCap { break }
 		var fp map[string]any
 		_ = json.Unmarshal(n.Payload, &fp)
-		pendingList = append(pendingList, map[string]any{"id": n.ID, "summary": fp["summary"], "state": n.State})
+		pendingList = append(pendingList, map[string]any{"id": n.ID, "summary": fp["summary"], "state": "pending_verification"})
 	}
 	out["pending_verification_list"] = pendingList
 	// recent_facts：非折叠事实里最新的一窗（≤N，factNodes 按 id 降序即最新在前）。已折进
