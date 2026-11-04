@@ -66,6 +66,7 @@ func jsonbClean(b []byte) []byte {
 // Node is a typed reasoning node (= old task_nodes). kind ∈ goal|intent|finding|hint.
 type Node struct {
 	FindingID     int64           `json:"finding_id,omitempty"` // populated by finding-aware reads; never inferred from ID
+	FindingStatus string          `json:"finding_status,omitempty"` // standalone findings.status; authoritative triage/verification state
 	FindingNodeID int64           `json:"finding_node_id,omitempty"`
 	TrafficCount  int             `json:"traffic_count,omitempty"`
 	ID            int64           `json:"id"`

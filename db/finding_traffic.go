@@ -441,7 +441,7 @@ func (s *ExplorationStore) PopulateFindingTrafficIDs(nodes []*Node) error {
 	if len(args) == 0 {
 		return nil
 	}
-	rows, err := s.db.Query(`SELECT f.id,f.node_id,(SELECT count(*) FROM finding_traffic_bindings b WHERE b.finding_id=f.id) FROM findings f WHERE f.node_id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+	rows, err := s.db.Query(`SELECT f.id,f.node_id,(SELECT count(*) FROM finding_traffic_bindings b WHERE b.finding_id=f.id),f.status FROM findings f WHERE f.node_id IN (`+strings.Join(placeholders, ",")+`)`, args...)
 	if err != nil {
 		return err
 	}
@@ -449,11 +449,12 @@ func (s *ExplorationStore) PopulateFindingTrafficIDs(nodes []*Node) error {
 	for rows.Next() {
 		var findingID, nodeID int64
 		var count int
-		if err := rows.Scan(&findingID, &nodeID, &count); err != nil {
+		var status string
+		if err := rows.Scan(&findingID, &nodeID, &count, &status); err != nil {
 			return err
 		}
 		n := byID[nodeID]
-		n.FindingID, n.FindingNodeID, n.TrafficCount = findingID, nodeID, count
+		n.FindingID, n.FindingNodeID, n.TrafficCount, n.FindingStatus = findingID, nodeID, count, status
 	}
 	return rows.Err()
 }

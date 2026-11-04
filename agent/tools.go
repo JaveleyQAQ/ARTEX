@@ -901,6 +901,16 @@ func compactNode(n *db.Node) map[string]any {
 	var p map[string]any
 	_ = json.Unmarshal(n.Payload, &p)
 	m := map[string]any{"id": n.ID, "state": n.State, "summary": p["summary"]}
+	if n.FindingStatus != "" {
+		m["finding_status"] = n.FindingStatus
+		if n.FindingStatus == db.FindingPending {
+			m["verification_status"] = "pending_verification"
+		} else if n.FindingStatus == db.FindingConfirmed || n.FindingStatus == db.FindingResolved || n.FindingStatus == db.FindingFixed || n.FindingStatus == db.FindingInProgress || n.FindingStatus == db.FindingRiskAccepted {
+			m["verification_status"] = "confirmed"
+		} else {
+			m["verification_status"] = "not_confirmed"
+		}
+	}
 	if n.Inherited {
 		inheritedMap(m, n.SourceTaskID)
 	}
@@ -925,7 +935,7 @@ func compactFinding(n *db.Node) map[string]any {
 }
 
 func (t *ToolSet) listFindings() actool.CoreTool {
-	return t.readExpTool("list_findings", "列本任务及直接关联任务的【确认漏洞】(紧凑：id+task_id+intent_id+vulnclass+severity+摘要+状态)。关联任务条目带 source_task_id/inherited=true 且只读。这里只含漏洞；普通探索事实用 list_facts，详情用 node_detail(id)。",
+	return t.readExpTool("list_findings", "列本任务及直接关联任务的漏洞候选与已确认漏洞(紧凑：id+task_id+intent_id+vulnclass+severity+摘要+漏洞状态+复核状态)。关联任务条目带 source_task_id/inherited=true 且只读。这里只含漏洞；普通探索事实用 list_facts，详情用 node_detail(id)。",
 		obj(map[string]any{}),
 		func(context.Context, json.RawMessage) (actool.Result, error) {
 			f, _ := t.ts.ListByKindWithSources(db.KindFinding, 500)
