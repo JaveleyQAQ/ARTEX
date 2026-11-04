@@ -210,7 +210,7 @@ var builtinAgents = []builtinAgent{
 	// Auto:内置「平台操作」agent。不参与渗透编排循环,经对话页驱动,用工具操作平台。
 	{"auto", "Auto", "assistant", "平台操作助手：用工具管理任务(建/看/暂停/给提示)与资产，并可创建/修改 skill、自定义工具、MCP。", nil, false, nil},
 	// 独立验证:只读审查已提交的漏洞证据，不具备目标访问/探测工具。
-	{"verifier", "独立验证", "verifier", "只读审查漏洞候选及其证据链，不执行目标探测。", nil, false, intp(180)},
+	{"verifier", "独立验证", "assistant", "只读审查漏洞候选及其证据链，不执行目标探测。", nil, false, intp(180)},
 	// 渗透测试:内置「独立渗透」agent。经对话页驱动,一人从侦察到收尾走完整条渗透链,自己规划自己执行自己验证。默认开启交互式 shell。
 	{"pentest", "渗透测试", "assistant", "独立渗透 agent：一人从侦察→找攻击面→深入利用→验证→收尾走完整条链，自己规划、自己执行、自己对抗式验证。", nil, true, intp(0)},
 }
