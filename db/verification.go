@@ -193,28 +193,12 @@ RETURNING finding_id`, runID, verifier, verdict, summary, string(evidence)).Scan
 		return nil, err
 	}
 
-	if verdict == FindingVerdictConfirmed || verdict == FindingVerdictRejected {
-		findingStatus := FindingConfirmed
-		if verdict == FindingVerdictRejected {
-			findingStatus = FindingFalsePositive
-		}
-		result, updateErr := tx.ExecContext(ctx, `UPDATE findings SET status=$2 WHERE id=$1 AND status='pending'`, findingID, findingStatus)
-		if updateErr != nil {
-			return nil, updateErr
-		}
-		updated, rowsErr := result.RowsAffected()
-		if rowsErr != nil {
-			return nil, rowsErr
-		}
-		// The graph node starts in its legacy-compatible "confirmed" state.
-		// Only a rejected candidate is transitioned to the allowed "dismissed"
-		// graph state, and only if this verifier actually changed the pending row.
-		if updated > 0 && verdict == FindingVerdictRejected {
-			if _, err = tx.ExecContext(ctx, `UPDATE exploration_nodes
-SET state='dismissed'
-WHERE id=(SELECT node_id FROM findings WHERE id=$1) AND state='confirmed'`, findingID); err != nil {
-				return nil, err
-			}
+	if verdict == FindingVerdictConfirmed {
+		// Positive evidence review may promote a still-pending candidate. A
+		// negative model verdict is recorded for human triage, never auto-labelled
+		// false_positive: the verifier is a reviewer, not the final risk owner.
+		if _, err = tx.ExecContext(ctx, `UPDATE findings SET status=$2 WHERE id=$1 AND status='pending'`, findingID, FindingConfirmed); err != nil {
+			return nil, err
 		}
 	}
 	if err := tx.Commit(); err != nil {

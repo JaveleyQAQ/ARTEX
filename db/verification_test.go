@@ -83,7 +83,7 @@ func TestRequeueStaleFindingVerificationRuns(t *testing.T) {
 }
 
 
-func TestRejectedFindingVerificationDismissesCandidate(t *testing.T) {
+func TestRejectedFindingVerificationKeepsHumanTriagePending(t *testing.T) {
 	d, err := Open(testDSN(t))
 	if err != nil {
 		t.Skipf("postgres unavailable: %v", err)
@@ -116,15 +116,15 @@ func TestRejectedFindingVerificationDismissesCandidate(t *testing.T) {
 		t.Fatal(err)
 	}
 	finding, err := d.GetFinding(recorded.FindingID)
-	if err != nil || finding.Status != FindingFalsePositive {
-		t.Fatalf("rejected finding=%+v err=%v", finding, err)
+	if err != nil || finding.Status != FindingPending {
+		t.Fatalf("rejected finding must remain pending for human triage: %+v err=%v", finding, err)
 	}
 	node, err := store.GetNode(recorded.NodeID)
-	if err != nil || node.State != "dismissed" {
-		t.Fatalf("rejected node=%+v err=%v", node, err)
+	if err != nil || node.State != "confirmed" {
+		t.Fatalf("rejected candidate graph node=%+v err=%v", node, err)
 	}
 	confirmed, pending, err := store.FindingVerificationOverview()
-	if err != nil || len(confirmed) != 0 || len(pending) != 0 {
+	if err != nil || len(confirmed) != 0 || len(pending) != 1 || pending[0] != recorded.NodeID {
 		t.Fatalf("rejected overview confirmed=%v pending=%v err=%v", confirmed, pending, err)
 	}
 }
