@@ -443,12 +443,20 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 	// via node_detail(id).
 	vulnNodes, _ := t.ts.ListByKind(db.KindFinding, 1000)
 	factNodes, _ := t.ts.ListByKind(db.KindFact, 1000) // newest first
+	confirmedIDs, pendingIDs, _ := t.ts.FindingVerificationOverview()
+	confirmedSet, pendingSet := map[int64]bool{}, map[int64]bool{}
+	for _, id := range confirmedIDs {
+		confirmedSet[id] = true
+	}
+	for _, id := range pendingIDs {
+		pendingSet[id] = true
+	}
 	confirmedFindings := make([]*db.Node, 0, len(vulnNodes))
 	pendingFindings := make([]*db.Node, 0)
 	for _, n := range vulnNodes {
-		if n.State == "confirmed" {
+		if confirmedSet[n.ID] {
 			confirmedFindings = append(confirmedFindings, n)
-		} else if n.State == "pending_verification" {
+		} else if pendingSet[n.ID] {
 			pendingFindings = append(pendingFindings, n)
 		}
 	}

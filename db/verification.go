@@ -196,7 +196,7 @@ RETURNING finding_id`, runID, verifier, verdict, summary, string(evidence)).Scan
 	if verdict == FindingVerdictConfirmed || verdict == FindingVerdictRejected {
 		findingStatus, nodeState := FindingConfirmed, "confirmed"
 		if verdict == FindingVerdictRejected {
-			findingStatus, nodeState = FindingFalsePositive, "rejected"
+			findingStatus, nodeState = FindingFalsePositive, "dismissed"
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE findings SET status=$2 WHERE id=$1 AND status='pending'`, findingID, findingStatus); err != nil {
 			return nil, err
@@ -235,4 +235,35 @@ func (d *DB) ListFindingVerificationRuns(ctx context.Context, findingID int64) (
 		out = append(out, run)
 	}
 	return out, rows.Err()
+}
+
+
+// FindingVerificationOverview returns validated and pending candidate node ids.
+// The standalone findings table is authoritative; graph-node state alone is not
+// a verification signal because legacy nodes predate this lifecycle.
+func (s *ExplorationStore) FindingVerificationOverview() (confirmed, pending []int64, err error) {
+	rows, err := s.db.Query(`
+SELECT f.node_id, f.status
+FROM findings f
+JOIN tasks t ON t.id=f.task_id
+WHERE t.exploration_id=$1 AND f.node_id IS NOT NULL
+ORDER BY f.id DESC`, s.expID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var nodeID int64
+		var status string
+		if err := rows.Scan(&nodeID, &status); err != nil {
+			return nil, nil, err
+		}
+		switch status {
+		case FindingConfirmed, FindingInProgress, FindingResolved, FindingFixed, FindingRiskAccepted:
+			confirmed = append(confirmed, nodeID)
+		case FindingPending:
+			pending = append(pending, nodeID)
+		}
+	}
+	return confirmed, pending, rows.Err()
 }
