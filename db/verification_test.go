@@ -29,3 +29,39 @@ func TestFindingVerificationLifecycle(t *testing.T) {
  finding,err=d.GetFinding(recorded.FindingID);if err!=nil||finding.Status!=FindingConfirmed{t.Fatalf("confirmed finding=%+v err=%v",finding,err)}
  node,err=store.GetNode(recorded.NodeID);if err!=nil||node.State!="confirmed"{t.Fatalf("confirmed node=%+v err=%v",node,err)}
 }
+
+func TestRequeueStaleFindingVerificationRuns(t *testing.T) {
+	d := testDB(t)
+	defer d.Close()
+	task, err := d.CreateTask("stale verification", "fixture", nil, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.DeleteTask(task.ID)
+	store := d.Exploration(task.ExplorationID)
+	recorded, err := store.RecordFinding(t.Context(), RecordFindingInput{
+		TaskID: task.ID, VulnClass: "TEST", Severity: SeverityLow,
+		Summary: "stale candidate", Evidence: "fixture evidence", Worker: "worker",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs, err := d.ListFindingVerificationRuns(t.Context(), recorded.FindingID)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("runs=%+v err=%v", runs, err)
+	}
+	if _, err := d.ClaimFindingVerificationRun(t.Context(), runs[0].ID, "crashed-reviewer"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`UPDATE finding_verification_runs SET started_at=now()-interval '10 minutes' WHERE id=$1`, runs[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	requeued, err := d.RequeueStaleFindingVerificationRuns(t.Context(), time.Minute)
+	if err != nil || requeued != 1 {
+		t.Fatalf("requeued=%d err=%v", requeued, err)
+	}
+	recovered, err := d.GetFindingVerificationRun(t.Context(), runs[0].ID)
+	if err != nil || recovered.Status != FindingVerificationPending || recovered.Verifier != "" {
+		t.Fatalf("recovered run=%+v err=%v", recovered, err)
+	}
+}

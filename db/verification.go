@@ -76,6 +76,45 @@ FROM finding_verification_runs WHERE status='pending' ORDER BY id ASC LIMIT $1`,
 	return out, rows.Err()
 }
 
+// RequeueStaleFindingVerificationRuns recovers claims abandoned by a process crash.
+// Runs that exhaust the retry budget are closed as inconclusive rather than blocking
+// the candidate forever.
+func (d *DB) RequeueStaleFindingVerificationRuns(ctx context.Context, age time.Duration) (int64, error) {
+	if age <= 0 {
+		age = 5 * time.Minute
+	}
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	cutoff := time.Now().Add(-age)
+	if _, err := tx.ExecContext(ctx, `
+UPDATE finding_verification_runs
+SET status='completed', verdict='inconclusive',
+    summary='复核进程异常退出且自动重试次数已耗尽，需人工复核',
+    last_error='stale verifier claim exhausted retry budget', finished_at=now()
+WHERE status='running' AND started_at < $1 AND attempts >= 3`, cutoff); err != nil {
+		return 0, err
+	}
+	result, err := tx.ExecContext(ctx, `
+UPDATE finding_verification_runs
+SET status='pending', verifier='', started_at=NULL,
+    last_error='stale verifier claim recovered after worker restart'
+WHERE status='running' AND started_at < $1 AND attempts < 3`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	requeued, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return requeued, nil
+}
+
 // ClaimFindingVerificationRun atomically leases a pending review to one reviewer.
 // This persistence API does not grant target-execution or network-probing capabilities.
 func (d *DB) ClaimFindingVerificationRun(ctx context.Context, runID int64, verifier string) (*FindingVerificationRun, error) {
