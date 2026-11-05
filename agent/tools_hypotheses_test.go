@@ -27,6 +27,7 @@ func TestRecordHypothesisResultPersistsOutcomeAndEvidence(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	tools := NewToolSet(store, "worker")
 	tools.SetTaskID(task.ID)
+	tools.SetOwnerNode(intentID)
 	tool := tools.recordHypothesisResult()
 	result, err := tool.Call(context.Background(), json.RawMessage(`{
 		"intent_id":`+hypothesisFixtureJSONNumber(intentID)+`,
