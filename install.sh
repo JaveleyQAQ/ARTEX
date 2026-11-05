@@ -60,10 +60,25 @@ install_local(){
   case "$(ask '选择' 1)" in
     2)
       ensure_docker
-      local pw; pw="$(ask 'Postgres 密码（回车随机）' "$(rand)")"
-      docker run -d --name artex-pg -p 5432:5432 \
-        -e POSTGRES_USER=artex -e POSTGRES_PASSWORD="$pw" -e POSTGRES_DB=artex \
-        -v artex-pg:/var/lib/postgresql/data postgres:16-alpine
+      local pw
+      if docker container inspect artex-pg >/dev/null 2>&1; then
+        warn "检测到已有 artex-pg 容器，将复用该数据库"
+        docker start artex-pg >/dev/null
+        pw="$(ask '请输入创建该 PostgreSQL 容器时设置的密码' '')"
+        [ -n "$pw" ] || die "复用已有数据库时必须输入原密码"
+      else
+        pw="$(ask 'Postgres 密码（回车随机）' "$(rand)")"
+        docker run -d --name artex-pg -p 5432:5432 \
+          -e POSTGRES_USER=artex -e POSTGRES_PASSWORD="$pw" -e POSTGRES_DB=artex \
+          -v artex-pg:/var/lib/postgresql/data postgres:16-alpine >/dev/null
+      fi
+      info "等待 PostgreSQL 就绪…"
+      local ready=0
+      for _ in $(seq 1 30); do
+        if docker exec artex-pg pg_isready -U artex -d artex >/dev/null 2>&1; then ready=1; break; fi
+        sleep 2
+      done
+      [ "$ready" = 1 ] || die "PostgreSQL 启动超时，请检查：docker logs artex-pg"
       DB_HOST=127.0.0.1 DB_PORT=5432 DB_USER=artex DB_PASS="$pw" DB_NAME=artex DB_SSL=disable ;;
     *)
       DB_HOST="$(ask '数据库地址' 127.0.0.1)"
@@ -94,16 +109,18 @@ JSON
   ok "Go: $(go version)"
 
   # 内嵌前端需要 node 出静态产物
-  if command -v npm >/dev/null 2>&1; then
-    info "构建前端静态产物…"
-    ( cd web && npm ci && npm run build:static )
-    rm -rf server/webui/dist && cp -r web/out server/webui/dist
-    info "编译内嵌单二进制…"
-    CGO_ENABLED=0 go build -tags embedui -trimpath -o artex ./cmd/artex
-  else
-    warn "未检测到 npm：将编译**不内嵌前端**的后端（前端需另跑 npm run dev）"
-    CGO_ENABLED=0 go build -o artex ./cmd/artex
-  fi
+  command -v npm >/dev/null 2>&1 || die "未检测到 npm，请先安装 Node.js 22+ 与 npm：https://nodejs.org/"
+  info "构建前端静态产物…"
+  ( cd web && npm ci && npm run build:static )
+  [ -f web/out/index.html ] || die "前端构建未生成 web/out/index.html，请检查 Next.js 构建日志"
+  # server/webui 在源码仓库中可能尚不存在；先创建父目录再复制。
+  mkdir -p server/webui
+  rm -rf server/webui/dist
+  mkdir -p server/webui/dist
+  cp -a web/out/. server/webui/dist/
+  [ -f server/webui/dist/index.html ] || die "前端静态文件复制失败：server/webui/dist/index.html 不存在"
+  info "编译内嵌单二进制…"
+  CGO_ENABLED=0 go build -tags embedui -trimpath -o artex ./cmd/artex
   ok "编译完成 → ./artex"
 
   info "启动…（Ctrl-C 退出）"
