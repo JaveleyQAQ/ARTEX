@@ -174,7 +174,7 @@ jobs:
 
       - name: Verify Phase 1 HTTP health on deployment server
         run: |
-          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "bash -s" <<'REMOTE'
+          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "DEPLOY_PATH='$DEPLOY_PATH' bash -s" <<'REMOTE'
           set -euo pipefail
           for attempt in $(seq 1 30); do
             if curl --fail --silent --show-error http://127.0.0.1:18787/api/health; then
