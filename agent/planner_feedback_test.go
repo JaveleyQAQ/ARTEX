@@ -112,4 +112,8 @@ func TestCompactIntentsPreservesPlanningContract(t *testing.T) {
 			t.Errorf("%s=%#v want %#v", key, got[0][key], want)
 		}
 	}
+	review, ok := got[0]["planner_review"].(map[string]any)
+	if !ok || review["outcome"] != "supported" || review["reason"] != "the fixture marker was observed" {
+		t.Fatalf("planner review missing from compact intent: %#v", got[0]["planner_review"])
+	}
 }
