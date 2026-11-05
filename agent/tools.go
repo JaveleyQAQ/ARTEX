@@ -19,6 +19,30 @@ import (
 // upstream nodes it derived from: facts/intents/findings) and yields (the facts/
 // findings it produced) — without pulling full payloads. parentsOf/yieldsOf are
 // built from the exploration edges in graph_overview.
+// intentReviewMetrics derives bounded rates from persisted outcome counts.
+// Rates use 0..1 fractions and remain zero when their denominator is empty.
+func intentReviewMetrics(stats map[string]int, terminalTotal int) map[string]any {
+	reviewed := 0
+	for _, count := range stats {
+		reviewed += count
+	}
+	rate := func(count, denominator int) float64 {
+		if denominator <= 0 {
+			return 0
+		}
+		return float64(count) / float64(denominator)
+	}
+	return map[string]any{
+		"reviewed_total": reviewed,
+		"terminal_intents": terminalTotal,
+		"review_coverage": rate(reviewed, terminalTotal),
+		"supported_rate": rate(stats["supported"], reviewed),
+		"refuted_rate": rate(stats["refuted"], reviewed),
+		"inconclusive_rate": rate(stats["inconclusive"], reviewed),
+		"execution_failure_rate": rate(stats["execution_failed"], reviewed),
+	}
+}
+
 func compactIntents(ns []*db.Node, parentsOf, yieldsOf map[int64][]int64) []map[string]any {
 	out := make([]map[string]any, 0, len(ns))
 	for _, n := range ns {
@@ -545,6 +569,9 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 	out["recent_done_intents"] = compactIntents(recentDone, parentsOf, yieldsOf)
 	if stats, err := t.ts.IntentReviewStats(); err == nil {
 		out["intent_review_stats"] = stats
+		if terminalTotal, countErr := t.ts.CountFinishedIntents(); countErr == nil {
+			out["intent_review_metrics"] = intentReviewMetrics(stats, terminalTotal)
+		}
 	}
 	// cold-digest §6.1: 折叠冷区的 digest body，按最新成员时间降序取前 N；被截的更旧 digest
 	// 只给裸 id（仍可 expand_digest 展开），避免冷区唯一出口被无限拉长。

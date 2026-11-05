@@ -113,3 +113,28 @@ func TestCompactIntentsPreservesPlanningContract(t *testing.T) {
 		t.Fatalf("planner review missing from compact intent: %#v", got[0]["planner_review"])
 	}
 }
+
+func TestIntentReviewMetricsUsesReviewedAndTerminalDenominators(t *testing.T) {
+	got := intentReviewMetrics(map[string]int{
+		"supported": 3, "refuted": 1, "inconclusive": 2, "execution_failed": 2,
+	}, 10)
+	want := map[string]float64{
+		"review_coverage": 0.8,
+		"supported_rate": 0.375,
+		"refuted_rate": 0.125,
+		"inconclusive_rate": 0.25,
+		"execution_failure_rate": 0.25,
+	}
+	for key, expected := range want {
+		if actual, ok := got[key].(float64); !ok || actual != expected {
+			t.Errorf("%s=%v want %v", key, got[key], expected)
+		}
+	}
+	if got["reviewed_total"] != 8 || got["terminal_intents"] != 10 {
+		t.Fatalf("unexpected totals: %#v", got)
+	}
+	empty := intentReviewMetrics(nil, 0)
+	if empty["review_coverage"] != float64(0) || empty["supported_rate"] != float64(0) {
+		t.Fatalf("empty metrics should be zero-valued: %#v", empty)
+	}
+}
