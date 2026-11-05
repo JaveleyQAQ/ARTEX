@@ -126,11 +126,16 @@ jobs:
           : "${DEPLOY_PATH:?Missing repository secret DEPLOY_PATH}"
           : "${DEPLOY_SSH_KEY:?Missing repository secret DEPLOY_SSH_KEY}"
           : "${DEPLOY_KNOWN_HOSTS:?Missing repository secret DEPLOY_KNOWN_HOSTS}"
-          if [[ "$DEPLOY_PATH" == *"'"* ]]; then
-            echo "::error::DEPLOY_PATH must not contain a single quote"
+          if [[ ! "$DEPLOY_PATH" =~ ^/[A-Za-z0-9_./-]+$ ]]; then
+            echo "::error::DEPLOY_PATH must be an absolute path using only letters, numbers, dot, underscore, slash, or hyphen"
             exit 1
           fi
-          echo "DEPLOY_PORT=${DEPLOY_PORT:-22}" >> "$GITHUB_ENV"
+          if [[ -z "$DEPLOY_PORT" ]]; then DEPLOY_PORT=22; fi
+          if [[ ! "$DEPLOY_PORT" =~ ^[0-9]{1,5}$ ]] || (( DEPLOY_PORT < 1 || DEPLOY_PORT > 65535 )); then
+            echo "::error::DEPLOY_PORT must be between 1 and 65535"
+            exit 1
+          fi
+          echo "DEPLOY_PORT=$DEPLOY_PORT" >> "$GITHUB_ENV"
 
       - name: Configure SSH
         run: |
