@@ -24,7 +24,7 @@ docker compose -p artex-phase1 --env-file .env.phase1 -f docker-compose.phase1.y
 docker compose -p artex-phase1 --env-file .env.phase1 -f docker-compose.phase1.yml up -d
 ```
 
-The isolated stack uses port 18787, loopback-only proxy port 18788, a dedicated named PostgreSQL volume, and `data-phase1/`. It does not mount or expose the normal ARTEX data directory or ports.
+The isolated stack binds web port 18787 and proxy port 18788 to localhost only, uses a dedicated named PostgreSQL volume, and stores files in `data-phase1/`. It does not mount or expose the normal ARTEX data directory or ports. Use an SSH tunnel or a TLS reverse proxy for remote browser access.
 
 ### Optional GitHub Actions SSH deployment
 
