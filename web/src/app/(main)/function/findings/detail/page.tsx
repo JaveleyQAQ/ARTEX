@@ -287,9 +287,9 @@ function FindingDetailInner() {
                 <FieldRow label="涉及资产">
                   {finding.assets && finding.assets.length > 0 ? (
                     <div className="flex flex-wrap justify-end gap-1">
-                      {finding.assets.map((a) => (
+                      {finding.assets.map((a, index) => (
                         <code
-                          key={a.id}
+                          key={`${a.id}:${a.type}:${a.label}:${index}`}
                           className="max-w-[16rem] truncate rounded bg-muted px-1.5 py-0.5 font-mono text-xs"
                           title={`${a.type} · ${a.label}`}
                         >
