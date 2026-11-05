@@ -15,7 +15,7 @@
 
 ## 2. 在独立 Docker 主机启动
 
-将仓库中的 `docker-compose.yml`、`docker-compose.phase1.yml` 和 `.env.phase1.example` 放到部署目录。复制并编辑环境文件：
+将仓库中的 `docker-compose.yml`、`docker-compose.phase1.yml`、`skills/` 和 `.env.phase1.example` 放到独立部署目录。复制并编辑环境文件：
 
 ```bash
 cp .env.phase1.example .env.phase1
