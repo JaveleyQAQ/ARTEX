@@ -28,6 +28,6 @@ The isolated stack binds web port 18787 and proxy port 18788 to localhost only, 
 
 ### Optional GitHub Actions SSH deployment
 
-Add these repository secrets: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PATH`, `DEPLOY_SSH_KEY`, and `DEPLOY_KNOWN_HOSTS`. `DEPLOY_PORT` is optional (defaults to 22). Prepare Docker/Compose and `.env.phase1` on the server. If the GHCR package is private, log in on the server with a token that can pull packages.
+Add these repository secrets: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PATH`, `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`, `GHCR_USERNAME`, and `GHCR_READ_TOKEN`. `DEPLOY_PORT` is optional (defaults to 22). `GHCR_READ_TOKEN` must be a fine-grained/classic token with permission to read packages (`read:packages`); the workflow securely pipes it to `docker login` on the server over SSH. Prepare Docker/Compose and `.env.phase1` on the server before enabling deployment. The deploy job copies the Compose file and skills, pulls an immutable commit-tagged image, then recreates the isolated stack. The server-side deploy account needs permission to run Docker and write to `DEPLOY_PATH`.
 
 Set repository variable `DEPLOY_PHASE1=true` to let feature-branch pushes deploy after publishing. Without that variable, the workflow only publishes the image and never connects to a server. Do not put private keys or tokens in source files or chat.
