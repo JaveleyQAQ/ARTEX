@@ -25,6 +25,16 @@ func compactIntents(ns []*db.Node, parentsOf, yieldsOf map[int64][]int64) []map[
 		var p map[string]any
 		_ = json.Unmarshal(n.Payload, &p)
 		m := map[string]any{"id": n.ID, "summary": p["summary"], "state": n.State}
+		m["priority"] = n.Priority
+		for _, key := range []string{"hypothesis", "expected_observation", "success_criteria", "stop_conditions", "priority_reason"} {
+			if value, ok := p[key].(string); ok && strings.TrimSpace(value) != "" {
+				limit := 240
+				if key == "hypothesis" || key == "priority_reason" {
+					limit = 300
+				}
+				m[key] = truncOutput(value, limit)
+			}
+		}
 		if n.Inherited {
 			m["source_task_id"] = n.SourceTaskID
 			m["inherited"] = true

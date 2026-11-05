@@ -78,3 +78,33 @@ func TestIsDuplicateActiveIntentIsConservative(t *testing.T) {
 		t.Fatal("completed direction may be revisited after new evidence")
 	}
 }
+
+func TestCompactIntentsPreservesPlanningContract(t *testing.T) {
+	node := &db.Node{
+		ID: 88, Kind: db.KindIntent, State: "open", Priority: 9,
+		Payload: json.RawMessage(`{
+			"summary":"inspect the fixture authorization boundary",
+			"hypothesis":"the role check may be missing",
+			"expected_observation":"a fixture user can read the protected marker",
+			"success_criteria":"capture a reproducible request and response",
+			"stop_conditions":"stop at the local fixture boundary",
+			"priority_reason":"high goal relevance and low verification cost"
+		}`),
+	}
+	got := compactIntents([]*db.Node{node}, nil, nil)
+	if len(got) != 1 {
+		t.Fatalf("compact intents length=%d", len(got))
+	}
+	for key, want := range map[string]any{
+		"priority": 9,
+		"hypothesis": "the role check may be missing",
+		"expected_observation": "a fixture user can read the protected marker",
+		"success_criteria": "capture a reproducible request and response",
+		"stop_conditions": "stop at the local fixture boundary",
+		"priority_reason": "high goal relevance and low verification cost",
+	} {
+		if got[0][key] != want {
+			t.Errorf("%s=%#v want %#v", key, got[0][key], want)
+		}
+	}
+}
