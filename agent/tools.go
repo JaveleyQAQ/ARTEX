@@ -543,6 +543,44 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 				// 都重复携带的大量字符串，对规划决策价值有限）；具体主机按需 list_assets 查。
 				m["host_count"] = len(hosts)
 			}
+			// Preserve the effective authorization scope and its company-rule provenance
+			// in the planner snapshot. Coverage metrics alone are insufficient: the
+			// planner must know which company/domain/IP/ICP/keyword constraints apply.
+			if scopes, err := t.as.ListTaskScopeWithSources(t.taskID); err == nil {
+				scopeRows := make([]map[string]any, 0, len(scopes))
+				for _, scope := range scopes {
+					row := map[string]any{
+						"id": scope.ID, "task_id": scope.TaskID, "kind": scope.Kind,
+						"source": scope.Source, "reason": scope.Reason,
+					}
+					if scope.CompanyID != nil {
+						row["company_id"] = *scope.CompanyID
+						row["company_name"] = scope.CompanyName
+						if t.cs != nil {
+							if rules, ruleErr := t.cs.GetScope(*scope.CompanyID); ruleErr == nil {
+								companyScope := make([]map[string]any, 0, len(rules))
+								keywords := make([]string, 0)
+								for _, rule := range rules {
+									value := rule.Value
+								if value == "" { value = rule.Domain }
+								if value == "" { value = rule.Net }
+								companyScope = append(companyScope, map[string]any{
+									"id": rule.ID, "kind": rule.Kind, "value": value,
+									"raw": rule.Raw, "reason": rule.Reason,
+								})
+									if rule.Kind == "keyword" { keywords = append(keywords, rule.Value) }
+								}
+							row["company_scope"] = companyScope
+							row["company_keywords"] = keywords
+						}
+					}
+					if scope.Domain != "" { row["domain"] = scope.Domain }
+					if scope.Net != "" { row["net"] = scope.Net }
+					if scope.Value != "" { row["value"] = scope.Value }
+					scopeRows = append(scopeRows, row)
+				}
+				m["scope"] = scopeRows
+			}
 			if len(m) > 0 {
 				out["coverage"] = m
 			}
