@@ -48,6 +48,21 @@ docker compose -p artex-phase1 --env-file .env.phase1 \
 - 停止验收环境：使用相同的 `-p`、`--env-file` 和 `-f` 参数执行 `down`。不要添加 `-v`，以保留验收数据。
 - 回滚应用版本：将 `.env.phase1` 中的 `ARTEX_TAG` 改为上一次验证过的不可变 `phase1-<commit-sha>`，再执行 `pull` 和 `up -d`。
 
-## 4. 真实部署自动化的前置条件
+## 4. GitHub Actions SSH 自动部署
 
-GitHub Actions 可以构建并推送镜像；要让它继续 SSH 到服务器自动更新容器，还需要部署主机地址、SSH 用户/私钥、主机指纹，以及镜像拉取凭据（若 GHCR 包私有）。当前仓库没有可验证的部署主机信息，因此工作流不会擅自向未知主机部署。
+在 GitHub 仓库 Settings → Secrets and variables → Actions 中添加以下 Repository secrets：
+
+| Secret | 内容 |
+| --- | --- |
+| `DEPLOY_HOST` | 测试服务器公网 IP 或域名 |
+| `DEPLOY_PORT` | SSH 端口；可不设，默认 22 |
+| `DEPLOY_USER` | SSH 登录用户 |
+| `DEPLOY_PATH` | 独立部署目录，例如 `/opt/artex-phase1` |
+| `DEPLOY_SSH_KEY` | 对应用户的 SSH 私钥（不要提交到仓库） |
+| `DEPLOY_KNOWN_HOSTS` | 预先核验过的 SSH host key 行 |
+
+服务器需预先安装 Docker Engine 和 Docker Compose，并在部署目录创建好 `.env.phase1`（参考 `.env.phase1.example`）。若 GHCR 镜像为私有包，还需在服务器执行一次 `docker login ghcr.io`，使用有 `read:packages` 权限的 PAT。不要把 SSH 私钥或 PAT 发到聊天中。
+
+配置完成后，在 Actions → **Phase 1 container** 运行工作流，选择 `feat/vulnerability-intelligence-foundation`，勾选 `deploy`。工作流先构建并推送镜像，再通过 SSH 更新独立的 `artex-phase1` Compose stack；部署时使用不可变的 commit tag。未勾选 `deploy` 时只构建和推送镜像，不连接任何服务器。
+
+当前尚未配置可验证的部署主机信息，所以我没有向未知主机发起部署。
