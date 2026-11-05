@@ -88,7 +88,8 @@ func TestCompactIntentsPreservesPlanningContract(t *testing.T) {
 			"expected_observation":"a fixture user can read the protected marker",
 			"success_criteria":"capture a reproducible request and response",
 			"stop_conditions":"stop at the local fixture boundary",
-			"priority_reason":"high goal relevance and low verification cost"
+			"priority_reason":"high goal relevance and low verification cost",
+			"planner_review":{"outcome":"supported","reason":"the fixture marker was observed","evidence_ids":[101]}
 		}`),
 	}
 	got := compactIntents([]*db.Node{node}, nil, nil)
@@ -102,6 +103,7 @@ func TestCompactIntentsPreservesPlanningContract(t *testing.T) {
 		"success_criteria": "capture a reproducible request and response",
 		"stop_conditions": "stop at the local fixture boundary",
 		"priority_reason": "high goal relevance and low verification cost",
+		"planner_review": map[string]any{"outcome":"supported", "reason":"the fixture marker was observed", "evidence_ids":[]any{float64(101)}},
 	} {
 		if got[0][key] != want {
 			t.Errorf("%s=%#v want %#v", key, got[0][key], want)
