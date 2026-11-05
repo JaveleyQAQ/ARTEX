@@ -1,0 +1,30 @@
+services:
+  workspace:
+    image: mcr.microsoft.com/devcontainers/base:bookworm
+    command: sleep infinity
+    volumes:
+      - ..:/workspaces/ARTEX:cached
+    working_dir: /workspaces/ARTEX
+    environment:
+      ARTEX_PG_DSN: postgres://artex:artex-dev-password@db:5432/artex?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: artex
+      POSTGRES_PASSWORD: artex-dev-password
+      POSTGRES_DB: artex
+    volumes:
+      - artex-codespaces-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U artex -d artex"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  artex-codespaces-pgdata:
