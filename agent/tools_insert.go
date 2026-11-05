@@ -647,6 +647,7 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 		t.listFindings(),
 		t.searchVulnerabilityPatterns(), t.proposeVulnerabilityPattern(),
 		t.linkFindingPattern(), t.listFindingPatternLinks(),
+		t.recordHypothesisResult(),
 		t.addFinding(), t.recordFact(),
 		// asset management (handlers guard nil store internally)。
 		// add_company_scope 不给 worker：定义企业资产范围属规划/主控/Auto 的职责，worker 只执行探索。
