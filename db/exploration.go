@@ -882,7 +882,7 @@ func (s *ExplorationStore) countByKindFiltered(kind, q string) (int, error) {
 func (s *ExplorationStore) CountFinishedIntents() (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM exploration_nodes
-WHERE exploration_id=$1 AND kind='intent' AND state IN ('done','blocked','exhausted')`, s.expID).Scan(&n)
+WHERE exploration_id=$1 AND kind='intent' AND state IN ('done','blocked','exhausted','stopped')`, s.expID).Scan(&n)
 	return n, err
 }
 

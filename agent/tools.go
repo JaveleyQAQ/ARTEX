@@ -432,7 +432,7 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 		switch n.State {
 		case "running":
 			running = append(running, n)
-		case "done", "blocked", "exhausted":
+		case "done", "blocked", "exhausted", "stopped":
 			if hidden(n.ID) {
 				continue // in a cold_digest and still cold — shown via cold_digests (§6.2)
 			}
