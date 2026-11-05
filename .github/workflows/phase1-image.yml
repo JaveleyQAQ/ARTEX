@@ -103,7 +103,7 @@ jobs:
 
       - name: Deployment image summary
         run: |
-          echo "Published image: ${{ steps.image.outputs.name }}:${{ inputs.image_tag }}"
+          echo "Published image: ${{ steps.image.outputs.name }}:${{ inputs.image_tag || 'phase1-latest' }}"
           echo "Commit image: ${{ steps.image.outputs.name }}:phase1-${GITHUB_SHA}"
           echo "Source branch: ${GITHUB_REF_NAME}"
           echo "Source commit: ${GITHUB_SHA}"
