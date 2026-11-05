@@ -1448,7 +1448,7 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 }
 
 func (t *ToolSet) searchIntentReviews() actool.CoreTool {
-	return t.readExpTool("search_intent_reviews", "检索本任务较早的已复盘探索经验。规划相似路线前按技术关键词或 outcome 查询；参考历史结论和适用条件，但不要脱离当前资产、范围和新证据机械套用。", obj(map[string]any{
+	return t.readExpTool("search_intent_reviews", "检索本任务及其显式关联来源任务中较早的已复盘探索经验。只读取 task_relations 明确关联的直接来源，不进行全局跨租户检索；参考历史结论和适用条件，但必须以当前任务授权范围、资产和新证据重新判断。", obj(map[string]any{
 		"query": str("可选技术关键词/资产特征/假设短语，按字面子串检索"),
 		"outcome": str("可选：supported|refuted|inconclusive|execution_failed"),
 		"limit": intp("返回数量，默认10，最大30"),
@@ -1461,14 +1461,41 @@ func (t *ToolSet) searchIntentReviews() actool.CoreTool {
 		if err := json.Unmarshal(in, &args); err != nil {
 			return actool.Errorf("invalid review search payload"), nil
 		}
-		nodes, err := t.ts.SearchIntentReviews(args.Query, args.Outcome, args.Limit)
+		limit := args.Limit
+		if limit <= 0 {
+			limit = 10
+		}
+		if limit > 30 {
+			limit = 30
+		}
+		nodes, err := t.ts.SearchIntentReviews(args.Query, args.Outcome, limit)
 		if err != nil {
 			return actool.Errorf(err.Error()), nil
+		}
+		// Cross-task recall is opt-in through an explicit task relation. Never
+		// fan out to unrelated tasks or the global asset/company corpus.
+		sources, err := t.ts.DirectSourceStores()
+		if err != nil {
+			return actool.Errorf(err.Error()), nil
+		}
+		for _, source := range sources {
+			inherited, searchErr := source.Store.SearchIntentReviews(args.Query, args.Outcome, limit)
+			if searchErr != nil {
+				return actool.Errorf(searchErr.Error()), nil
+			}
+			for _, node := range inherited {
+				node.SourceTaskID = source.Task.TaskID
+				node.Inherited = true
+				nodes = append(nodes, node)
+			}
+		}
+		sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID > nodes[j].ID })
+		if len(nodes) > limit {
+			nodes = nodes[:limit]
 		}
 		return jsonResult(compactIntents(nodes, nil, nil))
 	})
 }
-
 func (t *ToolSet) recordIntentReview() actool.CoreTool {
 	return t.writeExpTool("record_intent_review", "在复盘已结束的探索意图后，持久化结论。必须对照原假设、验收标准和实际观察，区分 supported/refuted/inconclusive/execution_failed；工具故障不是反证。只接受本任务已结束的 Intent，以及本任务事实/漏洞节点作为证据。每条意图只记录一次，新增证据实质改变结论时交由人工复核。", obj(map[string]any{
 		"intent_id": idp("已结束的本任务 Intent ID"),
