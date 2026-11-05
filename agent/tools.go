@@ -1056,11 +1056,24 @@ func (t *ToolSet) nodeDetail() actool.CoreTool {
 // --- planner write tools ---
 
 // intentItem 是 add_intent 批量/单条的一条探索方向。
+type hypothesisSpec struct {
+	PatternID          int64    `json:"pattern_id,omitempty"`
+	PatternKey         string   `json:"pattern_key,omitempty"`
+	AssetRef           string   `json:"asset_ref,omitempty"`
+	Preconditions      []string `json:"preconditions,omitempty"`
+	Indicators         []string `json:"indicators,omitempty"`
+	VerificationSteps  []string `json:"verification_steps,omitempty"`
+	ExpectedEvidence   []string `json:"expected_evidence,omitempty"`
+	Uncertainties      []string `json:"uncertainties,omitempty"`
+	AcceptanceCriteria []string `json:"acceptance_criteria,omitempty"`
+}
+
 type intentItem struct {
-	Summary   string            `json:"summary"`
-	AssetIDs  []json.RawMessage `json:"asset_ids"`
-	ParentIDs []json.RawMessage `json:"parent_ids"`
-	Priority  int               `json:"priority"`
+	Summary    string            `json:"summary"`
+	AssetIDs   []json.RawMessage `json:"asset_ids"`
+	ParentIDs  []json.RawMessage `json:"parent_ids"`
+	Priority   int               `json:"priority"`
+	Hypothesis *hypothesisSpec   `json:"hypothesis,omitempty"`
 }
 
 // addOneIntent 创建一条意图节点并连上游血缘，返回 id。
@@ -1106,6 +1119,19 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 	if len(anchors) > 0 {
 		payload["asset_ids"] = anchors
 	}
+	if it.Hypothesis != nil {
+		h := *it.Hypothesis
+		if len(h.VerificationSteps) == 0 || len(h.ExpectedEvidence) == 0 {
+			return 0, fmt.Errorf("漏洞假设必须包含 verification_steps 和 expected_evidence")
+		}
+		if h.PatternID < 0 {
+			return 0, fmt.Errorf("pattern_id 不能为负数")
+		}
+		if len(anchors) == 0 && strings.TrimSpace(h.AssetRef) == "" {
+			return 0, fmt.Errorf("漏洞假设必须绑定 asset_ids 或 asset_ref")
+		}
+		payload["hypothesis"] = h
+	}
 	id, err := t.ts.AddIntent(payload, priority, anchors, "planner")
 	if err != nil {
 		return 0, err
@@ -1134,6 +1160,17 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 			"summary":    str("[单条] 一句话描述这个探索方向：做什么+为什么。已写清方向即可，不依赖资产 id。"),
 			"asset_ids":  map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "本方向要测试/攻击的【目标资产 id】（**尽量传**，0/1/多个；是 list_assets 返回的资产 id，不是探索节点 id）：这条探索方向针对哪些资产（站点/接口/参数/主机等）。只要方向围绕某些具体资产就务必传上——它是「这条探索打哪些目标」的结构化标记，用于覆盖去重、把意图连入资产链路。仅当纯全局侦察、确实没有具体目标资产时才留空。"},
 			"parent_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "上游锚点 id（可选，0/1/多个）：本方向由哪些【已确认的事实(fact)/发现(finding)】综合得出。**只能填已存在的 fact/finding 节点 id,不能填意图/目标/提示**——意图必须锚在已确认知识上,发现驱动而非凭空规划。多个事实共同产生一个新意图就传多个;顶层全新侦察方向请留空（会自动挂到任务起点 origin fact）。"},
+			"hypothesis": obj(map[string]any{
+				"pattern_id": intp("来源漏洞模式 ID（可选）"),
+				"pattern_key": str("来源漏洞模式键（可选）"),
+				"asset_ref": str("目标资产的可读引用；同时仍应尽量传 asset_ids"),
+				"preconditions": stringArraySchema("需要满足的前置条件"),
+				"indicators": stringArraySchema("触发该假设的实际观察指标"),
+				"verification_steps": stringArraySchema("Worker 必须逐项执行的非破坏性验证步骤"),
+				"expected_evidence": stringArraySchema("确认/否定该假设所需的证据"),
+				"uncertainties": stringArraySchema("尚不确定的条件与误报风险"),
+				"acceptance_criteria": stringArraySchema("判定 confirmed/rejected 的明确标准"),
+			}),
 			"priority":   intp("优先级 0-10，默认5"),
 		}),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
