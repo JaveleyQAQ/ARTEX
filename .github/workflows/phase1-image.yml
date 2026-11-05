@@ -171,3 +171,21 @@ jobs:
         run: |
           ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
             "cd '$DEPLOY_PATH' && ARTEX_TAG='phase1-$GITHUB_SHA' docker compose -p artex-phase1 --env-file .env.phase1 -f docker-compose.phase1.yml pull artex && ARTEX_TAG='phase1-$GITHUB_SHA' docker compose -p artex-phase1 --env-file .env.phase1 -f docker-compose.phase1.yml up -d && docker compose -p artex-phase1 --env-file .env.phase1 -f docker-compose.phase1.yml ps"
+
+      - name: Verify Phase 1 HTTP health on deployment server
+        run: |
+          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "bash -s" <<'REMOTE'
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:18787/api/health; then
+              echo
+              echo "Phase 1 health check passed."
+              exit 0
+            fi
+            echo "Waiting for ARTEX health endpoint (attempt $attempt/30)..."
+            sleep 3
+          done
+          echo "Phase 1 health check failed; recent container logs follow:"
+          docker compose -p artex-phase1 --env-file .env.phase1 -f "$DEPLOY_PATH/docker-compose.phase1.yml" logs --tail=100 artex
+          exit 1
+          REMOTE
