@@ -1,0 +1,107 @@
+name: Phase 1 Runner deployment
+
+on:
+  push:
+    branches:
+      - feat/vulnerability-intelligence-foundation
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase1-runner-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  run-on-github-hosted-runner:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: artex
+          POSTGRES_PASSWORD: artex_phase1_ci
+          POSTGRES_DB: artex_phase1
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U artex -d artex_phase1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      ARTEX_PG_DSN: postgres://artex:artex_phase1_ci@localhost:5432/artex_phase1?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run build:static
+
+      - name: Embed frontend
+        run: |
+          mkdir -p server/webui/dist
+          cp -a web/out/. server/webui/dist/
+          test -s server/webui/dist/index.html
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build ARTEX
+        run: |
+          CGO_ENABLED=0 go build -tags embedui -trimpath -ldflags="-s -w -X main.version=phase1-${GITHUB_SHA}" -o artex ./cmd/artex
+          test -s ./artex
+          ./artex -h
+
+      - name: Start ARTEX on the ephemeral GitHub Runner
+        run: |
+          mkdir -p "$RUNNER_TEMP/artex-phase1-data"
+          nohup ./artex -addr 127.0.0.1:8787 -data "$RUNNER_TEMP/artex-phase1-data" -proxy "" > "$RUNNER_TEMP/artex.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/artex.pid"
+
+      - name: Verify application, database and embedded UI
+        run: |
+          ready=0
+          for i in $(seq 1 60); do
+            if curl --silent --fail http://127.0.0.1:8787/api/health > "$RUNNER_TEMP/health.json"; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$ready" != "1" ]]; then
+            cat "$RUNNER_TEMP/artex.log"
+            echo "::error::ARTEX did not become healthy"
+            exit 1
+          fi
+          grep -q '"ok":true' "$RUNNER_TEMP/health.json"
+          curl --silent --show-error --fail http://127.0.0.1:8787/api/auth/status | tee "$RUNNER_TEMP/auth-status.json"
+          grep -q '"initialized":false' "$RUNNER_TEMP/auth-status.json"
+          curl --silent --show-error --fail http://127.0.0.1:8787/ | grep -qi '<html'
+          echo "ARTEX process, PostgreSQL-backed auth status, and embedded frontend are healthy."
+
+      - name: Print ARTEX logs on failure
+        if: failure()
+        run: |
+          if [[ -f "$RUNNER_TEMP/artex.log" ]]; then cat "$RUNNER_TEMP/artex.log"; fi
+
+      - name: Stop ARTEX
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/artex.pid" ]]; then
+            kill "$(cat "$RUNNER_TEMP/artex.pid")" 2>/dev/null || true
+          fi
