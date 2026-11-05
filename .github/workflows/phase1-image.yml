@@ -1,6 +1,9 @@
 name: Phase 1 container
 
 on:
+  push:
+    branches:
+      - feat/vulnerability-intelligence-foundation
   workflow_dispatch:
     inputs:
       image_tag:
@@ -29,7 +32,7 @@ jobs:
       - name: Validate image tag and normalize image name
         id: image
         env:
-          IMAGE_TAG: ${{ inputs.image_tag }}
+          IMAGE_TAG: ${{ inputs.image_tag || 'phase1-latest' }}
         run: |
           if [[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
             echo "::error::Invalid Docker image tag"
@@ -89,7 +92,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ${{ steps.image.outputs.name }}:${{ inputs.image_tag }}
+            ${{ steps.image.outputs.name }}:${{ inputs.image_tag || 'phase1-latest' }}
             ${{ steps.image.outputs.name }}:phase1-${{ github.sha }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -106,7 +109,7 @@ jobs:
           echo "Source commit: ${GITHUB_SHA}"
 
   deploy-test-server:
-    if: ${{ inputs.deploy }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.deploy) || (github.event_name == 'push' && vars.DEPLOY_PHASE1 == 'true') }}
     needs: build-and-push
     runs-on: ubuntu-latest
     env:
