@@ -119,6 +119,8 @@ jobs:
       DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
       DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
       DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -129,6 +131,12 @@ jobs:
           : "${DEPLOY_PATH:?Missing repository secret DEPLOY_PATH}"
           : "${DEPLOY_SSH_KEY:?Missing repository secret DEPLOY_SSH_KEY}"
           : "${DEPLOY_KNOWN_HOSTS:?Missing repository secret DEPLOY_KNOWN_HOSTS}"
+          : "${GHCR_USERNAME:?Missing repository secret GHCR_USERNAME}"
+          : "${GHCR_READ_TOKEN:?Missing repository secret GHCR_READ_TOKEN}"
+          if [[ ! "$GHCR_USERNAME" =~ ^[A-Za-z0-9-]+$ ]]; then
+            echo "::error::GHCR_USERNAME contains unsupported characters"
+            exit 1
+          fi
           if [[ ! "$DEPLOY_PATH" =~ ^/[A-Za-z0-9_./-]+$ ]]; then
             echo "::error::DEPLOY_PATH must be an absolute path using only letters, numbers, dot, underscore, slash, or hyphen"
             exit 1
@@ -148,6 +156,11 @@ jobs:
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
+      - name: Log in to GHCR on the deployment server
+        run: |
+          printf '%s' "$GHCR_READ_TOKEN" | ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \\
+            "docker login ghcr.io --username '$GHCR_USERNAME' --password-stdin"
+
       - name: Copy Compose files to test server
         run: |
           ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
@@ -157,4 +170,4 @@ jobs:
       - name: Deploy immutable image to isolated Phase 1 stack
         run: |
           ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
-            "cd '$DEPLOY_PATH' && ARTEX_TAG='phase1-$GITHUB_SHA' docker compose -p artex-phase1 --env-file .env.phase1 -f docker-compose.phase1.yml pull artex && ARTEX_TAG='phase1-$GITHUB_SHA' docker compose -p artex-phase1 --env-file .env.phase1 -f docker-compose.phase1.yml up -d"
+            "cd '$DEPLOY_PATH' && ARTEX_TAG='phase1-$GITHUB_SHA' docker compose -p artex-phase1 --env-file .env.phase1 -f docker-compose.phase1.yml pull artex && ARTEX_TAG='phase1-$GITHUB_SHA' docker compose -p artex-phase1 --env-file .env.phase1 -f docker-compose.phase1.yml up -d && docker compose -p artex-phase1 --env-file .env.phase1 -f docker-compose.phase1.yml ps"
