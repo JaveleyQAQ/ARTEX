@@ -49,3 +49,17 @@ func TestIntentPriorityMustBeWithinRange(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeIntentPriority(t *testing.T) {
+	for input, want := range map[int]int{0: 5, 1: 1, 8: 8, 10: 10} {
+		got, err := normalizeIntentPriority(input)
+		if err != nil || got != want {
+			t.Errorf("normalizeIntentPriority(%d) = %d, %v; want %d", input, got, err, want)
+		}
+	}
+	for _, input := range []int{-1, 11} {
+		if _, err := normalizeIntentPriority(input); err == nil {
+			t.Errorf("normalizeIntentPriority(%d) should reject out-of-range value", input)
+		}
+	}
+}

@@ -1265,6 +1265,16 @@ func findDuplicateActiveIntent(ts *db.ExplorationStore, proposed intentItem, anc
 // 约束：意图只能锚在已确认知识上——每个 parent_id 必须是已存在的 fact/finding
 // 节点（不能挂在别的意图/目标/提示上）。顶层全新方向留空 parent_ids，兜底连 origin fact。
 // 这样"每个意图都连到 fact 节点、且是发现驱动而非凭空规划"从创建路径上被强制。
+func normalizeIntentPriority(priority int) (int, error) {
+	if priority == 0 {
+		return 5, nil
+	}
+	if priority < 1 || priority > 10 {
+		return 0, fmt.Errorf("priority 必须在 1-10 之间（0 表示使用默认值 5）")
+	}
+	return priority, nil
+}
+
 func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 	if strings.TrimSpace(it.Summary) == "" {
 		return 0, fmt.Errorf("summary 不能为空")
@@ -1280,12 +1290,9 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 			return 0, fmt.Errorf("parent_id %d 是 %q 节点，不能作为意图锚点：意图只能锚在已确认的【事实(fact)/发现(finding)】上，不能挂在意图/目标/提示上；顶层全新方向请留空 parent_ids", pidv, n.Kind)
 		}
 	}
-	priority := it.Priority
-	if priority == 0 {
-		priority = 5
-	}
-	if priority < 1 || priority > 10 {
-		return 0, fmt.Errorf("priority 必须在 1-10 之间（0 表示使用默认值 5）")
+	priority, err := normalizeIntentPriority(it.Priority)
+	if err != nil {
+		return 0, err
 	}
 	anchors := pidList(it.AssetIDs)
 	// Deterministic frontier guard: block only exact active duplicates. Similar
@@ -1343,7 +1350,8 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 			"summary": str("[单条] 一句话描述这个探索方向：做什么+为什么。已写清方向即可，不依赖资产 id。"),
 			"asset_ids": map[string]any{"type":"array","items":map[string]any{"type":"integer"},"description":"本方向对应的目标资产 ID。"},
 			"parent_ids": map[string]any{"type":"array","items":map[string]any{"type":"integer"},"description":"派生本方向的事实/发现节点 ID。"},
-			"priority": intp("优先级 0-10，默认5"),
+			"priority": intp("优先级 0-10，默认5；按目标相关性、证据置信度、新颖性、预估成本与风险综合评分。"),
+			"priority_reason": str("简述该优先级的依据：目标价值、现有证据、新颖性、预计成本/风险。"),
 			"hypothesis": str("待验证的可证伪假设。"),
 			"expected_observation": str("假设成立/不成立时分别预期观察到什么。"),
 			"success_criteria": str("什么证据足以支持或否定假设。"),
