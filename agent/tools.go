@@ -1146,6 +1146,7 @@ type intentItem struct {
 	AssetIDs           []json.RawMessage `json:"asset_ids"`
 	ParentIDs          []json.RawMessage `json:"parent_ids"`
 	Priority           int               `json:"priority"`
+	PriorityReason     string            `json:"priority_reason"`
 	Hypothesis         string            `json:"hypothesis"`
 	ExpectedObservation string           `json:"expected_observation"`
 	SuccessCriteria    string            `json:"success_criteria"`
@@ -1160,7 +1161,8 @@ func intentItemProperties() map[string]any {
 		"summary": str("一句话描述探索方向：做什么+为什么。"),
 		"asset_ids": map[string]any{"type":"array","items":map[string]any{"type":"integer"},"description":"本方向对应的目标资产 ID。"},
 		"parent_ids": map[string]any{"type":"array","items":map[string]any{"type":"integer"},"description":"派生本方向的事实/发现节点 ID。"},
-		"priority": intp("优先级 0-10，默认5"),
+		"priority": intp("优先级 0-10，默认5；按目标相关性、证据置信度、新颖性、预估成本与风险综合评分。"),
+		"priority_reason": str("简述该优先级的依据：目标价值、现有证据、新颖性、预计成本/风险。"),
 		"hypothesis": str("待验证的可证伪假设：基于哪些已知事实，怀疑存在什么条件或关系。"),
 		"expected_observation": str("若假设成立，预期观察到什么；若不成立，可能观察到什么。"),
 		"success_criteria": str("什么证据足以支持/否定该假设；避免仅凭版本或猜测下结论。"),
@@ -1176,6 +1178,7 @@ func intentPayload(it intentItem, anchors []int64) map[string]any {
 		payload["asset_ids"] = anchors
 	}
 	for key, value := range map[string]string{
+		"priority_reason": it.PriorityReason,
 		"hypothesis": it.Hypothesis,
 		"expected_observation": it.ExpectedObservation,
 		"success_criteria": it.SuccessCriteria,
@@ -1280,6 +1283,9 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 	priority := it.Priority
 	if priority == 0 {
 		priority = 5
+	}
+	if priority < 1 || priority > 10 {
+		return 0, fmt.Errorf("priority 必须在 1-10 之间（0 表示使用默认值 5）")
 	}
 	anchors := pidList(it.AssetIDs)
 	// Deterministic frontier guard: block only exact active duplicates. Similar
