@@ -383,9 +383,9 @@ WHERE id=$4 AND exploration_id=$5 AND kind='intent'
   AND state IN ('done','blocked','exhausted','stopped')
   AND NOT (COALESCE(payload, '{}'::jsonb) ? 'planner_review')
   AND NOT EXISTS (
-	SELECT 1 FROM unnest($6::bigint[]) AS evidence_id
+	SELECT 1 FROM unnest($6::bigint[]) AS requested(evidence_id)
 	LEFT JOIN exploration_nodes evidence
-	  ON evidence.id=evidence_id
+	  ON evidence.id=requested.evidence_id
 	 AND evidence.exploration_id=$5
 	 AND evidence.kind IN ('fact','finding')
 	WHERE evidence.id IS NULL

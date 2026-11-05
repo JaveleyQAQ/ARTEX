@@ -323,7 +323,7 @@ func TestRecordIntentReviewPersistsOnceAndCountsOutcomes(t *testing.T) {
 	if err := es.RecordIntentReview(intentID, "supported", "The observed fixture response meets the stated criterion.", []int64{factID}); err != nil {
 		t.Fatal(err)
 	}
-	if err := es.RecordIntentReview(intentID, "refuted", "must not overwrite"); err == nil {
+	if err := es.RecordIntentReview(intentID, "refuted", "must not overwrite", nil); err == nil {
 		t.Fatal("expected duplicate review to be rejected")
 	}
 	node, err := es.GetNode(intentID)
