@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 )
@@ -292,5 +293,87 @@ func TestNodesPageQueryMatchesID(t *testing.T) {
 		t.Fatal(err)
 	} else if total != 0 || len(nodes) != 0 {
 		t.Fatalf("non-existent id: total=%d nodes=%+v, want empty", total, nodes)
+	}
+}
+
+func TestRecordIntentReviewPersistsOnceAndCountsOutcomes(t *testing.T) {
+	d, err := Open(testDSN(t))
+	if err != nil {
+		t.Skipf("postgres unavailable (%v) — skipping", err)
+	}
+	defer d.Close()
+
+	expID, err := d.CreateExploration("test", "review intent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Exec(`DELETE FROM explorations WHERE id=$1`, expID)
+	es := d.Exploration(expID)
+	intentID, err := es.AddIntent(map[string]any{"summary":"check a fixture hypothesis"}, 5, nil, "planner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := es.SetIntentState(intentID, "done"); err != nil {
+		t.Fatal(err)
+	}
+	factID, err := es.AddNode(KindFact, map[string]any{"summary":"fixture observation"}, 0, "confirmed", "worker", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := es.RecordIntentReview(intentID, "supported", "The observed fixture response meets the stated criterion.", []int64{factID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := es.RecordIntentReview(intentID, "refuted", "must not overwrite"); err == nil {
+		t.Fatal("expected duplicate review to be rejected")
+	}
+	node, err := es.GetNode(intentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(node.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	review, ok := payload["planner_review"].(map[string]any)
+	if !ok || review["outcome"] != "supported" || review["reason"] == "" {
+		t.Fatalf("unexpected persisted review: %#v", payload["planner_review"])
+	}
+	stats, err := es.IntentReviewStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats["supported"] != 1 || stats["refuted"] != 0 {
+		t.Fatalf("unexpected review stats: %#v", stats)
+	}
+}
+
+func TestRecordIntentReviewRejectsInvalidEvidenceAndState(t *testing.T) {
+	d, err := Open(testDSN(t))
+	if err != nil {
+		t.Skipf("postgres unavailable (%v) — skipping", err)
+	}
+	defer d.Close()
+
+	expID, err := d.CreateExploration("test", "review guards")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Exec(`DELETE FROM explorations WHERE id=$1`, expID)
+	es := d.Exploration(expID)
+	intentID, err := es.AddIntent(map[string]any{"summary":"open intent"}, 5, nil, "planner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := es.RecordIntentReview(intentID, "supported", "not terminal", nil); err == nil {
+		t.Fatal("expected non-terminal intent to be rejected")
+	}
+	if err := es.SetIntentState(intentID, "done"); err != nil {
+		t.Fatal(err)
+	}
+	if err := es.RecordIntentReview(intentID, "supported", "foreign evidence", []int64{999999999}); err == nil {
+		t.Fatal("expected missing evidence to be rejected")
+	}
+	if err := es.RecordIntentReview(intentID, "unknown", "invalid outcome", nil); err == nil {
+		t.Fatal("expected invalid outcome to be rejected")
 	}
 }

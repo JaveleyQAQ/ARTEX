@@ -35,6 +35,9 @@ func compactIntents(ns []*db.Node, parentsOf, yieldsOf map[int64][]int64) []map[
 				m[key] = truncOutput(value, limit)
 			}
 		}
+		if review, ok := p["planner_review"].(map[string]any); ok {
+			m["planner_review"] = review
+		}
 		if n.Inherited {
 			m["source_task_id"] = n.SourceTaskID
 			m["inherited"] = true
@@ -540,6 +543,9 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 		recentDone = recentDone[:recentDoneCap]
 	}
 	out["recent_done_intents"] = compactIntents(recentDone, parentsOf, yieldsOf)
+	if stats, err := t.ts.IntentReviewStats(); err == nil {
+		out["intent_review_stats"] = stats
+	}
 	// cold-digest §6.1: 折叠冷区的 digest body，按最新成员时间降序取前 N；被截的更旧 digest
 	// 只给裸 id（仍可 expand_digest 展开），避免冷区唯一出口被无限拉长。
 	const coldDigestsCap = 15
@@ -1412,6 +1418,49 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 			}
 			return jsonResult(out)
 		})
+}
+
+func (t *ToolSet) recordIntentReview() actool.CoreTool {
+	return t.writeExpTool("record_intent_review", "在复盘已结束的探索意图后，持久化结论。必须对照原假设、验收标准和实际观察，区分 supported/refuted/inconclusive/execution_failed；工具故障不是反证。只接受本任务已结束的 Intent，以及本任务事实/漏洞节点作为证据。每条意图只记录一次，新增证据实质改变结论时交由人工复核。", obj(map[string]any{
+		"intent_id": idp("已结束的本任务 Intent ID"),
+		"outcome": str("supported|refuted|inconclusive|execution_failed"),
+		"reason": str("基于实际观察和原验收标准的复盘理由"),
+		"evidence_ids": map[string]any{"type":"array", "items":map[string]any{"type":"integer"}, "description":"支撑复盘的本任务事实/漏洞节点 ID；没有可引用节点时传空数组"},
+	}, "intent_id", "outcome", "reason"), func(_ context.Context, in json.RawMessage) (actool.Result, error) {
+		var args struct {
+			IntentID json.RawMessage `json:"intent_id"`
+			Outcome string `json:"outcome"`
+			Reason string `json:"reason"`
+			EvidenceIDs []json.RawMessage `json:"evidence_ids"`
+		}
+		if err := json.Unmarshal(in, &args); err != nil {
+			return actool.Errorf("invalid review payload"), nil
+		}
+		intentID := pid(args.IntentID)
+		if intentID <= 0 {
+			return actool.Errorf("intent_id 必填"), nil
+		}
+		intent, err := t.ts.GetNode(intentID)
+		if err != nil || intent == nil || intent.Kind != db.KindIntent {
+			return actool.Errorf("intent_id 必须是本任务的意图节点"), nil
+		}
+		switch intent.State {
+		case "done", "blocked", "exhausted", "stopped":
+		default:
+			return actool.Errorf("只能复盘已结束的意图"), nil
+		}
+		evidenceIDs := pidList(args.EvidenceIDs)
+		for _, evidenceID := range evidenceIDs {
+			node, err := t.ts.GetNode(evidenceID)
+			if err != nil || node == nil || (node.Kind != db.KindFact && node.Kind != db.KindFinding) {
+				return actool.Errorf(fmt.Sprintf("evidence_id %d 必须是本任务的事实/漏洞节点", evidenceID)), nil
+			}
+		}
+		if err := t.ts.RecordIntentReview(intentID, args.Outcome, args.Reason, evidenceIDs); err != nil {
+			return actool.Errorf(err.Error()), nil
+		}
+		return actool.Text(fmt.Sprintf("intent #%d review recorded: %s", intentID, args.Outcome)), nil
+	})
 }
 
 func (t *ToolSet) listGoals() actool.CoreTool {
@@ -2334,7 +2383,7 @@ func (t *ToolSet) listWorkerTraces() actool.CoreTool {
 // PlannerTools is the read + intent-generation + goal-judgement tool set.
 func (t *ToolSet) PlannerTools() []actool.CoreTool {
 	return []actool.CoreTool{
-		t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(),
+		t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(), t.recordIntentReview(),
 		// cold-digest §6.1: restore folded cold nodes (digest body → members → detail).
 		t.expandDigest(),
 		t.getWorkerOutput(), t.getWorkerTrace(), t.searchAllWorkerTraces(), t.listGoals(), t.addIntent(), t.proveGoal(), t.goalMet(),

@@ -349,6 +349,83 @@ WHERE exploration_id=$1 AND kind='intent' AND state='blocked'`, s.expID)
 	return n, nil
 }
 
+// RecordIntentReview stores the planner's evidence-based retrospective on a
+// terminal intent. The review lives in the existing JSONB payload, so this is
+// backward-compatible and requires no schema migration.
+func (s *ExplorationStore) RecordIntentReview(id int64, outcome, reason string, evidenceIDs []int64) error {
+	switch outcome {
+	case "supported", "refuted", "inconclusive", "execution_failed":
+	default:
+		return fmt.Errorf("invalid intent review outcome %q", outcome)
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return fmt.Errorf("intent review reason is required")
+	}
+	evidence, err := json.Marshal(evidenceIDs)
+	if err != nil {
+		return err
+	}
+	res, err := s.db.Exec(`
+UPDATE exploration_nodes
+SET payload = jsonb_set(
+	COALESCE(payload, '{}'::jsonb),
+	'{planner_review}',
+	jsonb_build_object(
+		'outcome', $1::text,
+		'reason', $2::text,
+		'evidence_ids', $3::jsonb,
+		'reviewed_at', now()
+	),
+	true
+), content_version = content_version + 1
+WHERE id=$4 AND exploration_id=$5 AND kind='intent'
+  AND state IN ('done','blocked','exhausted','stopped')
+  AND NOT (COALESCE(payload, '{}'::jsonb) ? 'planner_review')
+  AND NOT EXISTS (
+	SELECT 1 FROM unnest($6::bigint[]) AS evidence_id
+	LEFT JOIN exploration_nodes evidence
+	  ON evidence.id=evidence_id
+	 AND evidence.exploration_id=$5
+	 AND evidence.kind IN ('fact','finding')
+	WHERE evidence.id IS NULL
+  )`, outcome, reason, string(evidence), id, s.expID, evidenceIDs)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("intent %d is not terminal, already reviewed, or evidence is not a local fact/finding", id)
+	}
+	return nil
+}
+
+// IntentReviewStats returns durable planner-review counts by outcome.
+func (s *ExplorationStore) IntentReviewStats() (map[string]int, error) {
+	rows, err := s.db.Query(`
+SELECT payload->'planner_review'->>'outcome', COUNT(*)
+FROM exploration_nodes
+WHERE exploration_id=$1 AND kind='intent' AND payload ? 'planner_review'
+GROUP BY payload->'planner_review'->>'outcome'`, s.expID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var outcome string
+		var count int
+		if err := rows.Scan(&outcome, &count); err != nil {
+			return nil, err
+		}
+		out[outcome] = count
+	}
+	return out, rows.Err()
+}
+
 func (s *ExplorationStore) SetIntentState(id int64, state string) error {
 	// terminal states stamp completed_at; reopening (back to open/running) clears it.
 	terminal := state == "done" || state == "blocked" || state == "exhausted" || state == "stopped"
