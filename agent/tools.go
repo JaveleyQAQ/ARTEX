@@ -1420,6 +1420,28 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 		})
 }
 
+func (t *ToolSet) searchIntentReviews() actool.CoreTool {
+	return t.readExpTool("search_intent_reviews", "检索本任务较早的已复盘探索经验。规划相似路线前按技术关键词或 outcome 查询；参考历史结论和适用条件，但不要脱离当前资产、范围和新证据机械套用。", obj(map[string]any{
+		"query": str("可选技术关键词/资产特征/假设短语，按字面子串检索"),
+		"outcome": str("可选：supported|refuted|inconclusive|execution_failed"),
+		"limit": intp("返回数量，默认10，最大30"),
+	}), func(_ context.Context, in json.RawMessage) (actool.Result, error) {
+		var args struct {
+			Query string `json:"query"`
+			Outcome string `json:"outcome"`
+			Limit int `json:"limit"`
+		}
+		if err := json.Unmarshal(in, &args); err != nil {
+			return actool.Errorf("invalid review search payload"), nil
+		}
+		nodes, err := t.ts.SearchIntentReviews(args.Query, args.Outcome, args.Limit)
+		if err != nil {
+			return actool.Errorf(err.Error()), nil
+		}
+		return jsonResult(compactIntents(nodes, nil, nil))
+	})
+}
+
 func (t *ToolSet) recordIntentReview() actool.CoreTool {
 	return t.writeExpTool("record_intent_review", "在复盘已结束的探索意图后，持久化结论。必须对照原假设、验收标准和实际观察，区分 supported/refuted/inconclusive/execution_failed；工具故障不是反证。只接受本任务已结束的 Intent，以及本任务事实/漏洞节点作为证据。每条意图只记录一次，新增证据实质改变结论时交由人工复核。", obj(map[string]any{
 		"intent_id": idp("已结束的本任务 Intent ID"),
@@ -2383,7 +2405,7 @@ func (t *ToolSet) listWorkerTraces() actool.CoreTool {
 // PlannerTools is the read + intent-generation + goal-judgement tool set.
 func (t *ToolSet) PlannerTools() []actool.CoreTool {
 	return []actool.CoreTool{
-		t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(), t.recordIntentReview(),
+		t.graphOverview(), t.listFindings(), t.listFacts(), t.nodeDetail(), t.recordIntentReview(), t.searchIntentReviews(),
 		// cold-digest §6.1: restore folded cold nodes (digest body → members → detail).
 		t.expandDigest(),
 		t.getWorkerOutput(), t.getWorkerTrace(), t.searchAllWorkerTraces(), t.listGoals(), t.addIntent(), t.proveGoal(), t.goalMet(),

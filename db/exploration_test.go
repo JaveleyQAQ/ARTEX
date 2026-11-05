@@ -377,3 +377,43 @@ func TestRecordIntentReviewRejectsInvalidEvidenceAndState(t *testing.T) {
 		t.Fatal("expected invalid outcome to be rejected")
 	}
 }
+
+func TestSearchIntentReviewsFiltersAndBoundsResults(t *testing.T) {
+	d, err := Open(testDSN(t))
+	if err != nil {
+		t.Skipf("postgres unavailable (%v) — skipping", err)
+	}
+	defer d.Close()
+
+	expID, err := d.CreateExploration("test", "review recall")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Exec(`DELETE FROM explorations WHERE id=$1`, expID)
+	es := d.Exploration(expID)
+
+	addReviewed := func(summary, hypothesis, outcome string) int64 {
+		t.Helper()
+		id, err := es.AddIntent(map[string]any{"summary":summary, "hypothesis":hypothesis}, 5, nil, "planner")
+		if err != nil { t.Fatal(err) }
+		if err := es.SetIntentState(id, "done"); err != nil { t.Fatal(err) }
+		if err := es.RecordIntentReview(id, outcome, "reviewed against the fixture observation", nil); err != nil { t.Fatal(err) }
+		return id
+	}
+	supportedID := addReviewed("fixture authorization boundary", "role check may be missing", "supported")
+	addReviewed("fixture payment state", "state transition guard may be missing", "refuted")
+
+	got, err := es.SearchIntentReviews("role check", "supported", 10)
+	if err != nil { t.Fatal(err) }
+	if len(got) != 1 || got[0].ID != supportedID {
+		t.Fatalf("filtered review search = %+v, want only intent %d", got, supportedID)
+	}
+	all, err := es.SearchIntentReviews("fixture", "", 100)
+	if err != nil { t.Fatal(err) }
+	if len(all) != 2 {
+		t.Fatalf("unfiltered review search returned %d results, want 2", len(all))
+	}
+	if _, err := es.SearchIntentReviews("", "unknown", 10); err == nil {
+		t.Fatal("expected invalid outcome filter to be rejected")
+	}
+}

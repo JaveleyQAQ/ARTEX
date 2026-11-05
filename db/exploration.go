@@ -403,6 +403,42 @@ WHERE id=$4 AND exploration_id=$5 AND kind='intent'
 	return nil
 }
 
+// SearchIntentReviews retrieves older reviewed intents for task-local experience
+// recall. Query matching is literal substring matching over the compact JSON
+// payload; outcome is optional and results are bounded newest-first.
+func (s *ExplorationStore) SearchIntentReviews(query, outcome string, limit int) ([]*Node, error) {
+	query = strings.TrimSpace(query)
+	if len(query) > 160 {
+		return nil, fmt.Errorf("intent review query must be at most 160 bytes")
+	}
+	switch outcome {
+	case "", "supported", "refuted", "inconclusive", "execution_failed":
+	default:
+		return nil, fmt.Errorf("invalid intent review outcome %q", outcome)
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 30 {
+		limit = 30
+	}
+	rows, err := s.db.Query(`
+SELECT `+nodeCols+`
+FROM exploration_nodes
+WHERE exploration_id=$1
+  AND kind='intent'
+  AND payload ? 'planner_review'
+  AND ($2='' OR position(lower($2) in lower(payload::text)) > 0)
+  AND ($3='' OR payload->'planner_review'->>'outcome'=$3)
+ORDER BY id DESC
+LIMIT $4`, s.expID, query, outcome, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanNodes(rows)
+}
+
 // IntentReviewStats returns durable planner-review counts by outcome.
 func (s *ExplorationStore) IntentReviewStats() (map[string]int, error) {
 	rows, err := s.db.Query(`
