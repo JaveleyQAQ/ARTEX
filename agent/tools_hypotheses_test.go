@@ -29,7 +29,7 @@ func TestRecordHypothesisResultPersistsOutcomeAndEvidence(t *testing.T) {
 	tools.SetTaskID(task.ID)
 	tool := tools.recordHypothesisResult()
 	result, err := tool.Call(context.Background(), json.RawMessage(`{
-		"intent_id":`+jsonNumber(intentID)+`,
+		"intent_id":`+hypothesisFixtureJSONNumber(intentID)+`,
 		"outcome":"inconclusive",
 		"summary":"second test identity could not be provisioned",
 		"evidence":"HTTP 403 from identity bootstrap; no cross-user object request was made",
@@ -65,14 +65,14 @@ func TestRecordHypothesisResultRequiresStructuredHypothesisAndEvidence(t *testin
 	if err!=nil { t.Fatal(err) }
 	tool:=NewToolSet(store,"worker").recordHypothesisResult()
 	call:=func(input string) string { r,e:=tool.Call(context.Background(),json.RawMessage(input),nil); if e!=nil {t.Fatal(e)}; return r.Flatten() }
-	if got:=call(`{"intent_id":`+jsonNumber(intentID)+`,"outcome":"confirmed","summary":"claimed","evidence":"observed"}`); !strings.Contains(got,"没有结构化 hypothesis") {
+	if got:=call(`{"intent_id":`+hypothesisFixtureJSONNumber(intentID)+`,"outcome":"confirmed","summary":"claimed","evidence":"observed"}`); !strings.Contains(got,"没有结构化 hypothesis") {
 		t.Fatalf("expected structured-hypothesis guard, got %q",got)
 	}
 	hypID,err:=store.AddIntent(map[string]any{"summary":"hypothesis","hypothesis":map[string]any{"verification_steps":[]string{"check"},"expected_evidence":[]string{"response"}}},5,nil,"planner")
 	if err!=nil {t.Fatal(err)}
-	if got:=call(`{"intent_id":`+jsonNumber(hypID)+`,"outcome":"confirmed","summary":"claimed","evidence":""}`); !strings.Contains(got,"evidence 不能为空") {
+	if got:=call(`{"intent_id":`+hypothesisFixtureJSONNumber(hypID)+`,"outcome":"confirmed","summary":"claimed","evidence":""}`); !strings.Contains(got,"evidence 不能为空") {
 		t.Fatalf("expected evidence guard, got %q",got)
 	}
 }
 
-func jsonNumber(id int64) string { b,_:=json.Marshal(id); return string(b) }
+func hypothesisFixtureJSONNumber(id int64) string { b,_:=json.Marshal(id); return string(b) }
