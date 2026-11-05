@@ -158,7 +158,7 @@ jobs:
 
       - name: Log in to GHCR on the deployment server
         run: |
-          printf '%s' "$GHCR_READ_TOKEN" | ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \\
+          printf '%s' "$GHCR_READ_TOKEN" | ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
             "docker login ghcr.io --username '$GHCR_USERNAME' --password-stdin"
 
       - name: Copy Compose files to test server
