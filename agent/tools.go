@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sort"
+	"unicode"
 
 	"github.com/Autumn-27/artex/db"
 	acperm "github.com/Autumn-27/norma/permission"
@@ -1186,6 +1188,76 @@ func intentPayload(it intentItem, anchors []int64) map[string]any {
 	return payload
 }
 
+// normalizeIntentText creates a conservative exact-match key. It removes
+// punctuation/spacing differences but deliberately does not attempt fuzzy
+// semantic matching, which could suppress a materially different exploration.
+func normalizeIntentText(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			return r
+		}
+		return -1
+	}, value)
+}
+
+func sameAssetSet(left, right []int64) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	a, b := append([]int64(nil), left...), append([]int64(nil), right...)
+	sort.Slice(a, func(i, j int) bool { return a[i] < a[j] })
+	sort.Slice(b, func(i, j int) bool { return b[i] < b[j] })
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// isDuplicateActiveIntent only blocks an exact same direction already in the
+// open/running frontier. Completed directions remain eligible for a new attempt
+// when the planner has new evidence or a materially changed hypothesis.
+func isDuplicateActiveIntent(existing *db.Node, proposed intentItem, anchors []int64) bool {
+	if existing == nil || (existing.State != "open" && existing.State != "running") {
+		return false
+	}
+	var prior map[string]any
+	if json.Unmarshal(existing.Payload, &prior) != nil {
+		return false
+	}
+	priorSummary, _ := prior["summary"].(string)
+	priorHypothesis, _ := prior["hypothesis"].(string)
+	if normalizeIntentText(priorSummary) == "" ||
+		normalizeIntentText(priorSummary) != normalizeIntentText(proposed.Summary) {
+		return false
+	}
+	if normalizeIntentText(priorHypothesis) != normalizeIntentText(proposed.Hypothesis) {
+		return false
+	}
+	var priorAssets []int64
+	if raw, err := json.Marshal(prior["asset_ids"]); err == nil && len(raw) > 0 && string(raw) != "null" {
+		if json.Unmarshal(raw, &priorAssets) != nil {
+			return false
+		}
+	}
+	return sameAssetSet(priorAssets, anchors)
+}
+
+func findDuplicateActiveIntent(ts *db.ExplorationStore, proposed intentItem, anchors []int64) (*db.Node, error) {
+	nodes, err := ts.ListByKind(db.KindIntent, 5000)
+	if err != nil {
+		return nil, err
+	}
+	for _, node := range nodes {
+		if isDuplicateActiveIntent(node, proposed, anchors) {
+			return node, nil
+		}
+	}
+	return nil, nil
+}
+
 // addOneIntent 创建一条意图节点并连上游血缘，返回 id。
 // 约束：意图只能锚在已确认知识上——每个 parent_id 必须是已存在的 fact/finding
 // 节点（不能挂在别的意图/目标/提示上）。顶层全新方向留空 parent_ids，兜底连 origin fact。
@@ -1210,6 +1282,13 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 		priority = 5
 	}
 	anchors := pidList(it.AssetIDs)
+	// Deterministic frontier guard: block only exact active duplicates. Similar
+	// but materially different hypotheses and completed directions remain eligible.
+	if duplicate, err := findDuplicateActiveIntent(t.ts, it, anchors); err != nil {
+		return 0, fmt.Errorf("活动意图去重检查失败：%w", err)
+	} else if duplicate != nil {
+		return 0, fmt.Errorf("与当前活动意图 #%d 重复；请等待其完成，或基于新证据提出实质不同的假设", duplicate.ID)
+	}
 	// 资产拦截：意图绑定的资产若命中系统资产拦截规则，则禁止下发该意图。
 	if t.as != nil && len(anchors) > 0 {
 		hits, err := t.as.CheckAssetsIntercept(t.taskID, anchors)
