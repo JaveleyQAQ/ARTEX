@@ -52,3 +52,29 @@ func TestSummarizeIntentExecutionFeedbackHandlesLegacyIntentAndNoFacts(t *testin
 		t.Fatal("nil intent should produce no feedback")
 	}
 }
+
+func TestIsDuplicateActiveIntentIsConservative(t *testing.T) {
+	existing := &db.Node{
+		ID: 12, Kind: db.KindIntent, State: "open",
+		Payload: json.RawMessage(`{"summary":"Review /api/profile","hypothesis":"role check is missing","asset_ids":[3,9]}`),
+	}
+	proposed := intentItem{
+		Summary: " review /api/profile ",
+		Hypothesis: "role check is missing",
+	}
+	if !isDuplicateActiveIntent(existing, proposed, []int64{9, 3}) {
+		t.Fatal("same active direction with punctuation/asset ordering differences should be blocked")
+	}
+	proposed.Hypothesis = "a different authorization condition is present"
+	if isDuplicateActiveIntent(existing, proposed, []int64{3, 9}) {
+		t.Fatal("materially different hypothesis must remain eligible")
+	}
+	proposed.Hypothesis = "role check is missing"
+	if isDuplicateActiveIntent(existing, proposed, []int64{3, 10}) {
+		t.Fatal("different asset set must remain eligible")
+	}
+	existing.State = "done"
+	if isDuplicateActiveIntent(existing, proposed, []int64{3, 9}) {
+		t.Fatal("completed direction may be revisited after new evidence")
+	}
+}
