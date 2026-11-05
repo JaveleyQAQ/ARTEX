@@ -1,0 +1,9 @@
+services:
+  artex:
+    image: ${ARTEX_IMAGE:-ghcr.io/javeleyqaq/artex}:${ARTEX_TAG:-phase1-latest}
+    ports:
+      - "18787:8787"
+      - "127.0.0.1:18788:8788"
+    volumes:
+      - ./data-phase1:/app/data
+      - ./skills:/app/skills
