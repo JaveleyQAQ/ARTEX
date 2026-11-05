@@ -34,6 +34,9 @@ func (t *ToolSet) recordHypothesisResult() actool.CoreTool {
 			if err := json.Unmarshal(in, &a); err != nil { return actool.Errorf(err.Error()), nil }
 			a.Outcome = strings.ToLower(strings.TrimSpace(a.Outcome))
 			if a.IntentID <= 0 { return actool.Errorf("intent_id 必须为正数"), nil }
+			if t.ownerNode > 0 && a.IntentID != t.ownerNode {
+				return actool.Errorf("Worker 只能为自己当前领取的意图记录假设结果"), nil
+			}
 			switch a.Outcome {
 			case "confirmed","rejected","inconclusive","blocked":
 			default: return actool.Errorf("outcome 必须是 confirmed/rejected/inconclusive/blocked"), nil
