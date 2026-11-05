@@ -1,0 +1,41 @@
+{
+  "name": "ARTEX Codespaces",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "workspace",
+  "workspaceFolder": "/workspaces/ARTEX",
+  "features": {
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "1.26.3"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    }
+  },
+  "forwardPorts": [
+    5173,
+    8787
+  ],
+  "portsAttributes": {
+    "5173": {
+      "label": "ARTEX Web UI",
+      "onAutoForward": "openBrowser",
+      "visibility": "private"
+    },
+    "8787": {
+      "label": "ARTEX API",
+      "onAutoForward": "silent",
+      "visibility": "private"
+    }
+  },
+  "postCreateCommand": "cd web && npm ci",
+  "postStartCommand": "bash -lc 'nohup ./dev.sh >/tmp/artex-dev.log 2>&1 &'",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "dbaeumer.vscode-eslint"
+      ]
+    }
+  },
+  "remoteUser": "vscode"
+}

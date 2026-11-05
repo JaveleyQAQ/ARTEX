@@ -10,6 +10,7 @@ import { toast } from "sonner";
 
 import { CopyButton } from "@/components/copy-button";
 import { FindingRetestPanel } from "@/components/finding-retest-panel";
+import { FindingVerificationPanel } from "@/components/finding-verification-panel";
 import { FindingTrafficPanel } from "@/components/finding-traffic-panel";
 import { Markdown } from "@/components/markdown";
 import { StatusBadge } from "@/components/status-badge";
@@ -173,6 +174,7 @@ function FindingDetailInner() {
                 </CardContent>
               </Card>
               <FindingRetestPanel key={id} findingId={id} readOnly={finding.inherited} onCompleted={load} />
+              <FindingVerificationPanel key={`verification-${id}`} findingId={id} findingStatus={finding.status} readOnly={finding.inherited} />
               <Card>
                 <CardHeader>
                   <CardTitle className="text-sm">证据 / PoC</CardTitle>
@@ -285,9 +287,9 @@ function FindingDetailInner() {
                 <FieldRow label="涉及资产">
                   {finding.assets && finding.assets.length > 0 ? (
                     <div className="flex flex-wrap justify-end gap-1">
-                      {finding.assets.map((a) => (
+                      {finding.assets.map((a, index) => (
                         <code
-                          key={a.id}
+                          key={`${a.id}:${a.type}:${a.label}:${index}`}
                           className="max-w-[16rem] truncate rounded bg-muted px-1.5 py-0.5 font-mono text-xs"
                           title={`${a.type} · ${a.label}`}
                         >

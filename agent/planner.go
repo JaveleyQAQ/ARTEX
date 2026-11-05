@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -208,10 +209,109 @@ func renderTriggers(ts *db.ExplorationStore, evs []TriggerEvent) string {
 			if fids := factIDsYielded(ts, ev.IntentID); fids != "" {
 				b.WriteString(fmt.Sprintf("；本意图新产生的事实 id：%s ", fids))
 			}
+			b.WriteString(renderIntentExecutionFeedback(ts, ev.IntentID))
 		}
 	}
 	b.WriteString("\n（完整细节可 node_detail / get_worker_output / list_findings 再查。）")
 	return b.String()
+}
+
+// renderIntentExecutionFeedback gives the planner a compact, evidence-based
+// retrospective for the intent that just woke it. It deliberately separates
+// hypothesis outcome from execution/tool failures: a failed command is not
+// evidence that the hypothesis is false, and a clean run is not proof it is true.
+func renderIntentExecutionFeedback(ts *db.ExplorationStore, intentID int64) string {
+	if ts == nil || intentID <= 0 {
+		return ""
+	}
+	intent, err := ts.GetNode(intentID)
+	if err != nil || intent == nil {
+		return ""
+	}
+	activities, _, err := ts.ActivityList(&intentID, 0, 1000)
+	if err != nil {
+		activities = nil
+	}
+	facts, _ := ts.FactsYielded(intentID)
+	return summarizeIntentExecutionFeedback(intent, activities, facts)
+}
+
+// summarizeIntentExecutionFeedback is kept pure so its outcome classification
+// and bounded rendering can be tested without a PostgreSQL fixture.
+func summarizeIntentExecutionFeedback(intent *db.Node, activities []db.Activity, factIDs []int64) string {
+	if intent == nil {
+		return ""
+	}
+	var contract struct {
+		Hypothesis          string `json:"hypothesis"`
+		ExpectedObservation string `json:"expected_observation"`
+		SuccessCriteria     string `json:"success_criteria"`
+		StopConditions      string `json:"stop_conditions"`
+	}
+	_ = json.Unmarshal(intent.Payload, &contract)
+	var b strings.Builder
+	b.WriteString("\n【本轮执行复盘（系统从持久化记录汇总；不是模型推测）】")
+	fmt.Fprintf(&b, "\n- Intent #%d 终态：%s；活动记录：%d 条", intent.ID, intent.State, len(activities))
+	if contract.Hypothesis != "" {
+		fmt.Fprintf(&b, "\n- 原假设：%s", truncOutput(contract.Hypothesis, 300))
+	}
+	if contract.ExpectedObservation != "" {
+		fmt.Fprintf(&b, "\n- 预期观察：%s", truncOutput(contract.ExpectedObservation, 240))
+	}
+	if contract.SuccessCriteria != "" {
+		fmt.Fprintf(&b, "\n- 原验收标准：%s", truncOutput(contract.SuccessCriteria, 240))
+	}
+	toolCalls, toolErrors := 0, 0
+	errorTools := map[string]int{}
+	recentErrors := make([]string, 0, 3)
+	for _, activity := range activities {
+		if activity.Kind == "tool" || activity.Tool != "" {
+			toolCalls++
+		}
+		if !activity.IsError {
+			continue
+		}
+		toolErrors++
+		tool := activity.Tool
+		if tool == "" {
+			tool = "(unknown)"
+		}
+		errorTools[tool]++
+		if len(recentErrors) < 3 {
+			summary := strings.TrimSpace(activity.Summary)
+			if summary == "" {
+				summary = "工具调用返回错误"
+			}
+			recentErrors = append(recentErrors, fmt.Sprintf("%s: %s", tool, truncOutput(summary, 140)))
+		}
+	}
+	fmt.Fprintf(&b, "\n- 工具调用：%d；工具错误：%d", toolCalls, toolErrors)
+	if len(errorTools) > 0 {
+		names := make([]string, 0, len(errorTools))
+		for name := range errorTools {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		parts := make([]string, 0, len(names))
+		for _, name := range names {
+			parts = append(parts, fmt.Sprintf("%s×%d", name, errorTools[name]))
+		}
+		b.WriteString("（按工具：" + strings.Join(parts, "、") + "）")
+	}
+	for _, item := range recentErrors {
+		b.WriteString("\n- 最近错误：" + item)
+	}
+	if len(factIDs) > 0 {
+		ids := make([]string, 0, len(factIDs))
+		for _, id := range factIDs {
+			ids = append(ids, fmt.Sprintf("#%d", id))
+		}
+		b.WriteString("\n- 本轮写回事实：" + strings.Join(ids, "、"))
+	} else {
+		b.WriteString("\n- 本轮写回事实：无")
+	}
+	b.WriteString("\n复盘要求：分别判断假设被支持、被反证或仍不确定；先判断工具错误是否导致证据缺失。不得把工具失败当作反证，也不得把无错误/正常结束当作假设成立。若要重试，必须说明上次失败原因已改变；若观察有效且假设被反证，应调整假设或关闭该路线。")
+	return "\n" + truncOutput(b.String(), 1500)
 }
 
 // factIDsYielded lists the fact ids an intent produced this run as "#12、#15", so the
@@ -332,10 +432,30 @@ const plannerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
 
    **串行利用链：分步派，别拆成并行。** 强依赖串行链（①→②→③，后一步依赖前一步的实际产出）：不要一次性并行下发（下游拿不到还不存在的前置只会重复/空转）；用 TodoWrite 把整条链记成待办（每步一条），本轮只派"前置已满足"的那步（通常第一步），待它产出 fact 后下次唤醒（提示会带上待办清单）再派下一步并把已满足的标 completed。"同一件事"别拆两条（"确认触发点"和"触发触发点"是同一步）；只有【平行、互不依赖】的维度（如枚举多个不相关端点）才用多意图并行。
 
-5. **提交**：用【一次】add_intent 批量提交筛出的新方向（intents 数组，最多 4 个最高价值的，不要逐条多次调）：
+4.5 **执行结果复盘（每次有 done/finding 触发时必须先做）**：
+   - 先读本轮附带的【本轮执行复盘】和 worker 完整输出/trace（摘要不足时调用 get_worker_trace / get_worker_output / node_detail），逐项对照原 hypothesis、expected_observation、success_criteria。
+   - 将结果明确归为：supported（观察满足验收标准）、refuted（有效观察直接反证）、inconclusive（观察不足）、execution_failed（工具/网络/模型执行失败导致没有有效观察）。这四类不可混淆。
+   - supported：保存可复核事实，判断是否有新的下游假设；不要重复执行已完成的同一检查。
+   - refuted：保留否定事实并更新知识边界；除非出现新的材料性证据，不再重复同一路线。
+   - inconclusive：指出缺失的证据和最小补证动作；不要把推断升级为事实。
+   - execution_failed：先定位具体失败工具/错误；只有在失败原因已消除或替代执行路径明确时才重试。不得把网络超时、权限拒绝或工具异常解释为目标不存在/漏洞不存在。
+   - 每轮规划时检查 recent_done_intents：对尚无 planner_review 的终态意图，基于原假设、验收标准、实际产出和错误记录调用 record_intent_review 持久化复盘；已有复盘不得重复覆盖。证据引用仅使用本任务事实/漏洞节点 ID。
+   - 当近期窗口未覆盖可能相关的旧经验时，使用 search_intent_reviews 按技术关键词或 outcome 检索本任务及显式关联来源任务的历史复盘；来源任务经验仅为只读历史线索，绝不能充当当前目标的证据；必须结合当前资产、授权范围和新证据重新判断。
+   - 每轮最多优先推进 2–3 条机理不同的路线；优先级综合目标相关性、证据置信度、路线新颖性、预计成本与风险。高风险或越界动作必须服从操作约束与审批，不得因优先级高而绕过。
+   - 重试必须写明“上次失败原因 → 本次变化 → 预期新增证据”；仅改变措辞或重复相同请求不构成新策略。
+
+5. **把方向写成可验证假设，再提交**：每条非 trivial 意图都尽量填写结构化字段：
+   - hypothesis：基于哪些已知事实，怀疑存在什么可证伪条件/关系；不要把猜测写成事实。
+   - expected_observation：假设成立与不成立时，分别预期观察到什么。
+   - success_criteria：什么证据足以支持或否定假设；必须以本地隔离靶场中可复核的证据为准。
+   - stop_conditions：证据充分、超出明确范围、预算/风险限制或需要人工确认时停止。
+   这些字段会随意图持久化，并交给 worker 作为本次任务的上下文；不要只写一个模糊的“进一步测试”。
+   
+   **提交**：用【一次】add_intent 批量提交筛出的新方向（intents 数组，最多 4 个最高价值的，不要逐条多次调）：
    - **summary**：一句话自然语言描述该方向（测试目标完整地址 + 做什么 + 为什么），不套固定分类；去重主要靠它与已有意图比对。
    - **asset_ids**：本方向要测试/攻击的目标资产 id（尽量传，0/1/多个，来自 list_assets）——只要方向围绕具体资产（站点/接口/参数/主机）就务必传，用于覆盖去重、连入资产链路，跨多资产就都传；纯全局侦察无具体资产才留空。
    - **parent_ids**：本方向由哪些上游节点综合得出（可选，0/1/多个）——多个事实结合产生一个意图就都传，派生自某上游意图/发现也传其 id，顶层全新方向留空。
+   - **priority_reason**：用一句话说明优先级依据，至少考虑目标相关性、证据置信度、路线新颖性、预估成本与风险；priority 使用 1–10，0 留给系统默认值。
 
 不重复、不硬凑；但目标未达成、又有未覆盖且更深的打法时，该派就派。简洁、聚焦、高效。`
 

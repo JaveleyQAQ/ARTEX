@@ -1384,3 +1384,27 @@ CREATE INDEX IF NOT EXISTS idx_notification_deliveries_batch
     ON notification_deliveries(batch_id) WHERE batch_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_notification_deliveries_channel
     ON notification_deliveries(channel_id, id DESC);
+
+
+-- Independent verification lifecycle: findings remain candidates until a reviewer completes a run.
+CREATE TABLE IF NOT EXISTS finding_verification_runs (
+    id BIGSERIAL PRIMARY KEY,
+    finding_id BIGINT NOT NULL REFERENCES findings(id) ON DELETE CASCADE,
+    task_id BIGINT REFERENCES tasks(id) ON DELETE SET NULL,
+    intent_id BIGINT REFERENCES exploration_nodes(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','running','completed')),
+    verdict TEXT NOT NULL DEFAULT '' CHECK (verdict IN ('','confirmed','rejected','inconclusive')),
+    verifier TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT NOT NULL DEFAULT '',
+    evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_finding_verification_history ON finding_verification_runs(finding_id, id DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_finding_verification_active ON finding_verification_runs(finding_id) WHERE status IN ('pending','running');
+
+ALTER TABLE finding_verification_runs ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE finding_verification_runs ADD COLUMN IF NOT EXISTS last_error TEXT NOT NULL DEFAULT '';

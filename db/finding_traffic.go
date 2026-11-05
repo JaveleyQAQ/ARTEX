@@ -386,6 +386,11 @@ VALUES($1,'finding',$2,9,'confirmed',$3) RETURNING id`, in.ExplorationID, string
 VALUES(NULLIF($1,0),$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`, in.TaskID, out.NodeID, in.VulnClass, in.Name, in.Severity, in.Summary, in.Evidence, in.Worker, string(raw)).Scan(&out.FindingID); err != nil {
 		return nil, err
 	}
+	// Create the independent-review work item atomically with the candidate.
+	if _, err := tx.Exec(`INSERT INTO finding_verification_runs(finding_id,task_id,intent_id,status,evidence)
+VALUES($1,NULLIF($2::bigint,0),NULLIF($3::bigint,0),'pending',jsonb_build_array(jsonb_build_object('kind','candidate_submission','text',$4::text,'worker',$5::text)))`, out.FindingID, in.TaskID, in.IntentID, in.Evidence, in.Worker); err != nil {
+		return nil, err
+	}
 	// 在**同一事务**里登记一条推送事件：提交即保证「漏洞落库」与「推送任务存在」
 	// 原子一致，不存在提交成功却没入队、消息永久丢失的窗口。
 	// 这里的失败被隔离在保存点上、不影响漏洞写入（见函数注释），因此忽略返回值。
@@ -436,7 +441,7 @@ func (s *ExplorationStore) PopulateFindingTrafficIDs(nodes []*Node) error {
 	if len(args) == 0 {
 		return nil
 	}
-	rows, err := s.db.Query(`SELECT f.id,f.node_id,(SELECT count(*) FROM finding_traffic_bindings b WHERE b.finding_id=f.id) FROM findings f WHERE f.node_id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+	rows, err := s.db.Query(`SELECT f.id,f.node_id,(SELECT count(*) FROM finding_traffic_bindings b WHERE b.finding_id=f.id),f.status FROM findings f WHERE f.node_id IN (`+strings.Join(placeholders, ",")+`)`, args...)
 	if err != nil {
 		return err
 	}
@@ -444,11 +449,12 @@ func (s *ExplorationStore) PopulateFindingTrafficIDs(nodes []*Node) error {
 	for rows.Next() {
 		var findingID, nodeID int64
 		var count int
-		if err := rows.Scan(&findingID, &nodeID, &count); err != nil {
+		var status string
+		if err := rows.Scan(&findingID, &nodeID, &count, &status); err != nil {
 			return err
 		}
 		n := byID[nodeID]
-		n.FindingID, n.FindingNodeID, n.TrafficCount = findingID, nodeID, count
+		n.FindingID, n.FindingNodeID, n.TrafficCount, n.FindingStatus = findingID, nodeID, count, status
 	}
 	return rows.Err()
 }
