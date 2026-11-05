@@ -1153,7 +1153,7 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 }
 
 func (t *ToolSet) addIntent() actool.CoreTool {
-	return t.writeExpTool("add_intent", "生成【探索方向】写入 frontier，并连入探索链路。意图是开放的探索方向，不是固定类型——用 summary 一句话自由描述要探索/验证/利用什么。\n"+
+	return t.writeExpTool("add_intent", "生成【探索方向】写入 frontier，并连入探索链路。对已检索到 reviewed/verified 漏洞模式、或由明确资产观察触发的漏洞测试方向，必须尽量提供结构化 hypothesis：前置条件、触发指标、逐项非破坏性验证步骤、预期证据、不确定性和验收标准；同时绑定 asset_ids。没有足够依据时不要伪造假设，可创建普通侦察意图。\n"+
 		"★优先批量：一轮筛出的多个新方向放进 intents 数组一次提交（比逐条调用省往返）。返回 ids 数组，与 intents 等长同序（失败项 id=0，详情见 errors）。单条则省略 intents 直接给顶层 summary。",
 		obj(map[string]any{
 			"intents":    map[string]any{"type": "array", "description": "【优先用这个】要新增的探索方向数组，按顺序处理。每个元素字段同下方顶层字段（summary/asset_ids/parent_ids/priority）。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
