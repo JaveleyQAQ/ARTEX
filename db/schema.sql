@@ -1108,6 +1108,49 @@ CREATE INDEX IF NOT EXISTS idx_findings_status ON findings(status, created_at DE
 -- 「按资产」视图靠 asset_ids @> '[<id>]' 反查发现,没有这个 GIN 索引就是全表扫。
 CREATE INDEX IF NOT EXISTS idx_findings_asset_ids ON findings USING GIN(asset_ids jsonb_path_ops);
 
+-- Reusable vulnerability intelligence. Patterns are global knowledge records;
+-- model-proposed entries default to draft and are excluded from agent retrieval
+-- until reviewed/verified. Finding links preserve provenance back to real findings.
+CREATE TABLE IF NOT EXISTS vulnerability_patterns (
+    id                  BIGSERIAL PRIMARY KEY,
+    pattern_key         TEXT NOT NULL UNIQUE,
+    vulnclass           TEXT NOT NULL,
+    title               TEXT NOT NULL,
+    description         TEXT NOT NULL DEFAULT '',
+    preconditions       JSONB NOT NULL DEFAULT '[]',
+    indicators          JSONB NOT NULL DEFAULT '[]',
+    validation_guidance TEXT NOT NULL DEFAULT '',
+    limitations         JSONB NOT NULL DEFAULT '[]',
+    asset_types         JSONB NOT NULL DEFAULT '[]',
+    provenance          JSONB NOT NULL DEFAULT '[]',
+    confidence          TEXT NOT NULL DEFAULT '',
+    status              TEXT NOT NULL DEFAULT 'draft'
+                        CHECK (status IN ('draft','reviewed','verified','deprecated')),
+    version             INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_vulnerability_patterns_class_status
+    ON vulnerability_patterns(vulnclass, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_vulnerability_patterns_asset_types
+    ON vulnerability_patterns USING GIN(asset_types);
+DROP TRIGGER IF EXISTS trg_vulnerability_patterns_upd ON vulnerability_patterns;
+CREATE TRIGGER trg_vulnerability_patterns_upd BEFORE UPDATE ON vulnerability_patterns
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE IF NOT EXISTS finding_pattern_links (
+    finding_id  BIGINT NOT NULL REFERENCES findings(id) ON DELETE CASCADE,
+    pattern_id  BIGINT NOT NULL REFERENCES vulnerability_patterns(id) ON DELETE CASCADE,
+    relation    TEXT NOT NULL CHECK (relation IN ('supports','derived_from','related')),
+    rationale   TEXT NOT NULL DEFAULT '',
+    confidence  TEXT NOT NULL DEFAULT '',
+    reviewed    BOOLEAN NOT NULL DEFAULT false,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (finding_id, pattern_id)
+);
+CREATE INDEX IF NOT EXISTS idx_finding_pattern_links_pattern
+    ON finding_pattern_links(pattern_id, created_at DESC);
+
 -- 手动复测属于独立会话；结论与原漏洞处置状态分开保存。
 CREATE TABLE IF NOT EXISTS finding_retests (
     id BIGSERIAL PRIMARY KEY,
