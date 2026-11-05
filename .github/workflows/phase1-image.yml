@@ -8,6 +8,11 @@ on:
         required: true
         default: phase1-latest
         type: string
+      deploy:
+        description: "Deploy to the configured test server over SSH after publishing"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -99,3 +104,49 @@ jobs:
           echo "Commit image: ${{ steps.image.outputs.name }}:phase1-${GITHUB_SHA}"
           echo "Source branch: ${GITHUB_REF_NAME}"
           echo "Source commit: ${GITHUB_SHA}"
+
+  deploy-test-server:
+    if: ${{ inputs.deploy }}
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        run: |
+          : "${DEPLOY_HOST:?Missing repository secret DEPLOY_HOST}"
+          : "${DEPLOY_USER:?Missing repository secret DEPLOY_USER}"
+          : "${DEPLOY_PATH:?Missing repository secret DEPLOY_PATH}"
+          : "${DEPLOY_SSH_KEY:?Missing repository secret DEPLOY_SSH_KEY}"
+          : "${DEPLOY_KNOWN_HOSTS:?Missing repository secret DEPLOY_KNOWN_HOSTS}"
+          if [[ "$DEPLOY_PATH" == *"'"* ]]; then
+            echo "::error::DEPLOY_PATH must not contain a single quote"
+            exit 1
+          fi
+          echo "DEPLOY_PORT=${DEPLOY_PORT:-22}" >> "$GITHUB_ENV"
+
+      - name: Configure SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Copy Compose files to test server
+        run: |
+          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
+          scp -P "$DEPLOY_PORT" docker-compose.yml docker-compose.phase1.yml \
+            "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+
+      - name: Deploy immutable image to isolated Phase 1 stack
+        run: |
+          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_PATH' && ARTEX_TAG='phase1-$GITHUB_SHA' docker compose -p artex-phase1 --env-file .env.phase1 -f docker-compose.yml -f docker-compose.phase1.yml pull artex && ARTEX_TAG='phase1-$GITHUB_SHA' docker compose -p artex-phase1 --env-file .env.phase1 -f docker-compose.yml -f docker-compose.phase1.yml up -d"
