@@ -148,10 +148,10 @@ jobs:
       - name: Copy Compose files to test server
         run: |
           ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
-          scp -P "$DEPLOY_PORT" docker-compose.yml docker-compose.phase1.yml skills \
+          scp -P "$DEPLOY_PORT" docker-compose.phase1.yml skills \
             "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
 
       - name: Deploy immutable image to isolated Phase 1 stack
         run: |
           ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
-            "cd '$DEPLOY_PATH' && ARTEX_TAG='phase1-$GITHUB_SHA' docker compose -p artex-phase1 --env-file .env.phase1 -f docker-compose.yml -f docker-compose.phase1.yml pull artex && ARTEX_TAG='phase1-$GITHUB_SHA' docker compose -p artex-phase1 --env-file .env.phase1 -f docker-compose.yml -f docker-compose.phase1.yml up -d"
+            "cd '$DEPLOY_PATH' && ARTEX_TAG='phase1-$GITHUB_SHA' docker compose -p artex-phase1 --env-file .env.phase1 -f docker-compose.phase1.yml pull artex && ARTEX_TAG='phase1-$GITHUB_SHA' docker compose -p artex-phase1 --env-file .env.phase1 -f docker-compose.phase1.yml up -d"
