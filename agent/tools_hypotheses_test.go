@@ -18,19 +18,18 @@ func TestRecordHypothesisResultPersistsOutcomeAndEvidence(t *testing.T) {
 	store := d.Exploration(task.ExplorationID)
 	intentID, err := store.AddIntent(map[string]any{
 		"summary":"verify object ownership on endpoint",
-		"asset_ids":[]int64{123},
 		"hypothesis":map[string]any{
 			"pattern_id":int64(7),
 			"verification_steps":[]string{"read object as owner","read same object as another test user"},
 			"expected_evidence":[]string{"different authorization outcome for same object"},
 		},
-	}, 8, []int64{123}, "planner")
+	}, 8, nil, "planner")
 	if err != nil { t.Fatal(err) }
 	tools := NewToolSet(store, "worker")
 	tools.SetTaskID(task.ID)
 	tool := tools.recordHypothesisResult()
 	result, err := tool.Call(context.Background(), json.RawMessage(`{
-		"intent_id":`+jsonNumber(intentID)+`,
+		"intent_id":`+hypothesisTestJSONNumber(intentID)+`,
 		"outcome":"inconclusive",
 		"summary":"second test identity could not be provisioned",
 		"evidence":"HTTP 403 from identity bootstrap; no cross-user object request was made",
