@@ -559,14 +559,16 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 							companyScope := make([]map[string]any, 0, len(rules))
 							keywords := make([]string, 0)
 							for _, rule := range rules {
-								value := rule.Value
-								if value == "" { value = rule.Domain }
-								if value == "" { value = rule.Net }
+								normalized := rule.Value
+								if normalized == "" { normalized = rule.Domain }
+								if normalized == "" { normalized = rule.Net }
+								rawValue := rule.Raw
+								if rawValue == "" { rawValue = normalized }
 								companyScope = append(companyScope, map[string]any{
-									"id": rule.ID, "kind": rule.Kind, "value": value,
-									"raw": rule.Raw, "reason": rule.Reason,
+									"id": rule.ID, "kind": rule.Kind, "value": rawValue,
+									"normalized_value": normalized, "raw": rule.Raw, "reason": rule.Reason,
 								})
-								if rule.Kind == "keyword" { keywords = append(keywords, rule.Value) }
+								if rule.Kind == "keyword" { keywords = append(keywords, rawValue) }
 							}
 							row["company_scope"] = companyScope
 							row["company_keywords"] = keywords
