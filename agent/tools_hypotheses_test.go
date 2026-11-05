@@ -29,7 +29,7 @@ func TestRecordHypothesisResultPersistsOutcomeAndEvidence(t *testing.T) {
 	tools.SetTaskID(task.ID)
 	tool := tools.recordHypothesisResult()
 	result, err := tool.Call(context.Background(), json.RawMessage(`{
-		"intent_id":`+hypothesisTestJSONNumber(intentID)+`,
+		"intent_id":`+jsonNumber(intentID)+`,
 		"outcome":"inconclusive",
 		"summary":"second test identity could not be provisioned",
 		"evidence":"HTTP 403 from identity bootstrap; no cross-user object request was made",
