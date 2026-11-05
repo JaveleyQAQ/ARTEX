@@ -1126,6 +1126,19 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 		if h.PatternID < 0 {
 			return 0, fmt.Errorf("pattern_id 不能为负数")
 		}
+		if h.PatternID > 0 {
+			pattern, err := t.ts.GetVulnerabilityPattern(h.PatternID)
+			if err != nil || pattern == nil {
+				return 0, fmt.Errorf("漏洞假设引用的 pattern_id %d 不存在", h.PatternID)
+			}
+			if pattern.Status != db.PatternReviewed && pattern.Status != db.PatternVerified {
+				return 0, fmt.Errorf("漏洞假设只能引用 reviewed/verified 模式，pattern %d 当前状态为 %s", h.PatternID, pattern.Status)
+			}
+			if h.PatternKey != "" && h.PatternKey != pattern.PatternKey {
+				return 0, fmt.Errorf("pattern_key 与 pattern_id 不匹配")
+			}
+			h.PatternKey = pattern.PatternKey
+		}
 		if len(anchors) == 0 && strings.TrimSpace(h.AssetRef) == "" {
 			return 0, fmt.Errorf("漏洞假设必须绑定 asset_ids 或 asset_ref")
 		}
