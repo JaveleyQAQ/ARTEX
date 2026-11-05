@@ -38,10 +38,6 @@ func TestSummarizeIntentExecutionFeedbackSeparatesEvidenceFromToolFailure(t *tes
 			t.Errorf("feedback missing %q: %s", want, got)
 		}
 	}
-	review, ok := got[0]["planner_review"].(map[string]any)
-	if !ok || review["outcome"] != "supported" || review["reason"] != "the fixture marker was observed" {
-		t.Fatalf("planner review missing from compact intent: %#v", got[0]["planner_review"])
-	}
 }
 
 func TestSummarizeIntentExecutionFeedbackHandlesLegacyIntentAndNoFacts(t *testing.T) {
@@ -111,6 +107,10 @@ func TestCompactIntentsPreservesPlanningContract(t *testing.T) {
 		if got[0][key] != want {
 			t.Errorf("%s=%#v want %#v", key, got[0][key], want)
 		}
+	}
+	review, ok := got[0]["planner_review"].(map[string]any)
+	if !ok || review["outcome"] != "supported" || review["reason"] != "the fixture marker was observed" {
+		t.Fatalf("planner review missing from compact intent: %#v", got[0]["planner_review"])
 	}
 	review, ok := got[0]["planner_review"].(map[string]any)
 	if !ok || review["outcome"] != "supported" || review["reason"] != "the fixture marker was observed" {
