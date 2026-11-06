@@ -461,6 +461,9 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 		var fp map[string]any
 		_ = json.Unmarshal(n.Payload, &fp)
 		m := map[string]any{"id": n.ID, "summary": fp["summary"]}
+		if rootCauseKey, ok := fp["root_cause_key"].(string); ok && rootCauseKey != "" {
+			m["root_cause_key"] = rootCauseKey
+		}
 		if from := factFrom[n.ID]; from > 0 {
 			m["from_intent"] = from // 本漏洞由哪个意图产生
 		}
