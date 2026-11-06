@@ -548,12 +548,17 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 			if !t.coverageDisabled {
 				if cov, err := t.as.TaskCoverageWithSources(t.taskID); err == nil {
 					m["denominator"] = cov.Denominator
-					m["observed"] = cov.Tested\n\t\t\t\t\tm["tested"] = cov.SecurityTested\n\t\t\t\t\tm["security_tested_pct"] = cov.SecurityTestedPct\n\t\t\t\t\tm["by_type"] = cov.ByType\n\t\t\t\t\tm["note"] = "observed=至少有一条 Fact 关联该资产；tested=Worker 明确记录完成了有直接证据的安全测试尝试（不代表发现漏洞）。仅指纹/枚举/资产发现不会增加 tested。历史 Fact 未显式标记 test_status 时只计入 observed。范围包含当前任务及直接关联任务；关联 scope 只读。list_untested_assets 仍按是否有 Fact 观察筛选。"
+					m["observed"] = cov.Tested
+	\t\t\t\tm["tested"] = cov.SecurityTested
+	\t\t\t\tm["security_tested_pct"] = cov.SecurityTestedPct
+	\t\t\t\tm["by_type"] = cov.ByType
+	\t\t\t\tm["note"] = "observed=至少有一条 Fact 关联该资产；tested=Worker 明确记录完成了有直接证据的安全测试尝试（不代表发现漏洞）。仅指纹/枚举/资产发现不会增加 tested。历史 Fact 未显式标记 test_status 时只计入 observed。范围包含当前任务及直接关联任务；关联 scope 只读。list_untested_assets 仍按是否有 Fact 观察筛选。"
 					if cov.Denominator == 0 {
 						m["pct"] = nil
 						m["status"] = "范围未锚定"
 					} else {
-						m["pct"] = cov.Pct\n\t\t\t\t\t}
+						m["pct"] = cov.Pct
+	\t\t\t\t}
 				}
 			}
 			if hosts, err := t.as.HostsByTaskWithSources(t.taskID); err == nil {
