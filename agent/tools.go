@@ -1364,6 +1364,22 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 		if t.ts == nil {
 			return actool.Errorf("report_finding 需要任务上下文；平台对话请通过 add_task_hint 向对应任务交接漏洞，并在提示中携带已有的 traffic_refs，由任务 Agent 登记。已登记漏洞可用 bind_finding_traffic 补绑。"), nil
 		}
+		intentID := pid(a.IntentID)
+		if intentID <= 0 {
+			intentID = t.ownerNode
+		}
+		if t.ownerNode > 0 && intentID != t.ownerNode {
+			return actool.Errorf("Worker 只能为自己当前领取的意图报告漏洞"), nil
+		}
+		if intentID > 0 {
+			allowed, gateErr := t.ts.IntentHypothesisFindingAllowed(intentID)
+			if gateErr != nil {
+				return actool.Errorf(fmt.Sprintf("检查漏洞假设生命周期失败: %v", gateErr)), nil
+			}
+			if !allowed {
+				return actool.Errorf("该意图包含结构化 hypothesis；必须先提交 outcome=confirmed 且 acceptance_criteria_met=true 的 record_hypothesis_result，才能 report_finding"), nil
+			}
+		}
 		// Auto-binding off: ignore the evidence params instead of rejecting the call.
 		// stripTrafficParameters already removes them from the advertised schema, but
 		// models routinely emit fields anyway — failing here would discard a confirmed
