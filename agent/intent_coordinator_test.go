@@ -42,7 +42,7 @@ func TestAddIntentToolDeduplicatesSameCoordinatedWorkUnit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = d.DeleteTask(task.ID) })
+	defer func() { _ = d.DeleteTask(task.ID) }()
 
 	tools := NewToolSet(d.Exploration(task.ExplorationID), "planner")
 	result, err := tools.addIntent().Call(context.Background(), json.RawMessage(`{
