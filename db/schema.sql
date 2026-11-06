@@ -1097,6 +1097,8 @@ CREATE TABLE IF NOT EXISTS findings (
     evidence    TEXT NOT NULL DEFAULT '',
     worker      TEXT NOT NULL DEFAULT '',
     asset_ids   JSONB NOT NULL DEFAULT '[]',
+    -- Stable, task-local root-cause fingerprint; empty means deduplication is intentionally disabled.
+    fingerprint TEXT NOT NULL DEFAULT '',
     -- 处置状态：pending 待处理 / in_progress 处理中 / confirmed 已确认 / resolved 已处理 / fixed 已修复 /
     -- false_positive 误报 / ignored 忽略 / duplicate 重复 / risk_accepted 风险接受。
     -- 取值不加 CHECK：旧库靠下面的 ALTER 补列,CHECK 无法回填,统一由 server 侧白名单校验。
@@ -1108,6 +1110,10 @@ CREATE TABLE IF NOT EXISTS findings (
 ALTER TABLE findings ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
 ALTER TABLE findings ADD COLUMN IF NOT EXISTS name   TEXT NOT NULL DEFAULT '';
 ALTER TABLE findings ADD COLUMN IF NOT EXISTS report TEXT NOT NULL DEFAULT '';
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS fingerprint TEXT NOT NULL DEFAULT '';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_findings_task_fingerprint
+    ON findings(task_id, fingerprint)
+    WHERE task_id IS NOT NULL AND fingerprint <> '';
 CREATE INDEX IF NOT EXISTS idx_findings_task ON findings(task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_findings_time ON findings(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_findings_status ON findings(status, created_at DESC);
