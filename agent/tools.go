@@ -907,10 +907,12 @@ func (t *ToolSet) relatedTaskOverviews() []map[string]any {
 			}
 			if coverage, err := t.as.TaskCoverage(source.Task.TaskID, source.Task.ExplorationID); err == nil {
 				item["asset_coverage"] = map[string]any{
-					"denominator": coverage.Denominator,
-					"tested":      coverage.Tested,
-					"pct":         coverage.Pct,
-					"by_type":     coverage.ByType,
+					"denominator":          coverage.Denominator,
+					"observed":             coverage.Tested,
+					"tested":               coverage.SecurityTested,
+					"pct":                  coverage.Pct,
+					"security_tested_pct":  coverage.SecurityTestedPct,
+					"by_type":              coverage.ByType,
 				}
 			}
 		}
