@@ -45,7 +45,7 @@ func TestRecordHypothesisResultPersistsOutcomeAndEvidence(t *testing.T) {
 	if err != nil || fact == nil || fact.Kind != db.KindFact { t.Fatalf("fact=%+v err=%v",fact,err) }
 	var payload map[string]any
 	if err := json.Unmarshal(fact.Payload,&payload); err != nil { t.Fatal(err) }
-	if payload["hypothesis_outcome"]!="inconclusive" || payload["evidence"]=="" || payload["pattern_id"]!=float64(7) {
+	if payload["hypothesis_outcome"]!="inconclusive" || payload["evidence"]=="" || payload["pattern_id"]!=float64(7) || payload["acceptance_criteria_met"]!=false || len(payload["contradicting_evidence"].([]any))!=1 {
 		t.Fatalf("hypothesis evidence not persisted: %#v",payload)
 	}
 	edges, err := store.Edges(100)
@@ -53,6 +53,13 @@ func TestRecordHypothesisResultPersistsOutcomeAndEvidence(t *testing.T) {
 	linked:=false
 	for _, edge := range edges { if edge.From==intentID && edge.To==factID && edge.Rel==db.RelYields { linked=true } }
 	if !linked { t.Fatalf("result fact %d is not linked to intent %d",factID,intentID) }
+	hasHypothesis, status, outcome, err := store.IntentHypothesisLifecycle(intentID)
+	if err != nil || !hasHypothesis || status != "recorded" || outcome != "inconclusive" {
+		t.Fatalf("unexpected lifecycle: has=%v status=%q outcome=%q err=%v", hasHypothesis, status, outcome, err)
+	}
+	if err := store.SetIntentHypothesisLifecycle(intentID, "recorded", "inconclusive", factID); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRecordHypothesisResultRequiresStructuredHypothesisAndEvidence(t *testing.T) {
