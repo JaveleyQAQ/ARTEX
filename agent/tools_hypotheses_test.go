@@ -22,6 +22,7 @@ func TestRecordHypothesisResultPersistsOutcomeAndEvidence(t *testing.T) {
 			"pattern_id":int64(7),
 			"verification_steps":[]string{"read object as owner","read same object as another test user"},
 			"expected_evidence":[]string{"different authorization outcome for same object"},
+			"acceptance_criteria":[]string{"owner can read the object and non-owner cannot"},
 		},
 	}, 8, nil, "planner")
 	if err != nil { t.Fatal(err) }
@@ -79,7 +80,7 @@ func TestRecordHypothesisResultRequiresStructuredHypothesisAndEvidence(t *testin
 	if got:=call(`{"intent_id":`+hypothesisFixtureJSONNumber(intentID)+`,"outcome":"confirmed","summary":"claimed","evidence":"observed"}`); !strings.Contains(got,"没有结构化 hypothesis") {
 		t.Fatalf("expected structured-hypothesis guard, got %q",got)
 	}
-	hypID,err:=store.AddIntent(map[string]any{"summary":"hypothesis","hypothesis":map[string]any{"verification_steps":[]string{"check"},"expected_evidence":[]string{"response"}}},5,nil,"planner")
+	hypID,err:=store.AddIntent(map[string]any{"summary":"hypothesis","hypothesis":map[string]any{"verification_steps":[]string{"check"},"expected_evidence":[]string{"response"},"acceptance_criteria":[]string{"response matches expected control"}}},5,nil,"planner")
 	if err!=nil {t.Fatal(err)}
 	if got:=call(`{"intent_id":`+hypothesisFixtureJSONNumber(hypID)+`,"outcome":"confirmed","summary":"claimed","evidence":""}`); !strings.Contains(got,"evidence 不能为空") {
 		t.Fatalf("expected evidence guard, got %q",got)
