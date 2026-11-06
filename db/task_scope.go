@@ -266,7 +266,7 @@ type CoverageAsset struct {
 	Label string `json:"label"`
 }
 
-// CoverageByType is per-asset-type coverage: total in scope vs tested.
+// CoverageByType separates fact observation from explicit security-test attempts per asset type.
 type CoverageByType struct {
 	Type           string `json:"type"`
 	Total          int    `json:"total"`
@@ -274,9 +274,9 @@ type CoverageByType struct {
 	SecurityTested int    `json:"security_tested"` // explicit evidence-backed security test attempt
 }
 
-// Coverage is a task's rough asset test coverage — a reference figure for the agent,
-// NOT a precise metric. Denominator = assets matching any active task_scope row;
-// Tested = those anchored to at least one fact node in the exploration.
+// Coverage is a task's rough asset observation and security-test coverage — reference figures,
+// NOT precise metrics. Denominator = assets matching task_scope; Tested is the legacy
+// fact-observation count, while SecurityTested requires an explicit evidence-backed test_status.
 type Coverage struct {
 	Enabled     bool             `json:"enabled"`     // 资产覆盖度功能是否开启；false 时其余字段为零值
 	ScopeRows   int              `json:"scope_rows"`  // 0 → 范围未锚定
