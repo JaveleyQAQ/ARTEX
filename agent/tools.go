@@ -549,16 +549,16 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 				if cov, err := t.as.TaskCoverageWithSources(t.taskID); err == nil {
 					m["denominator"] = cov.Denominator
 					m["observed"] = cov.Tested
-	\t\t\t\tm["tested"] = cov.SecurityTested
-	\t\t\t\tm["security_tested_pct"] = cov.SecurityTestedPct
-	\t\t\t\tm["by_type"] = cov.ByType
-	\t\t\t\tm["note"] = "observed=至少有一条 Fact 关联该资产；tested=Worker 明确记录完成了有直接证据的安全测试尝试（不代表发现漏洞）。仅指纹/枚举/资产发现不会增加 tested。历史 Fact 未显式标记 test_status 时只计入 observed。范围包含当前任务及直接关联任务；关联 scope 只读。list_untested_assets 仍按是否有 Fact 观察筛选。"
+					m["tested"] = cov.SecurityTested
+					m["security_tested_pct"] = cov.SecurityTestedPct
+					m["by_type"] = cov.ByType
+					m["note"] = "observed=至少有一条 Fact 关联该资产；tested=Worker 明确记录完成了有直接证据的安全测试尝试（不代表发现漏洞）。仅指纹/枚举/资产发现不会增加 tested。历史 Fact 未显式标记 test_status 时只计入 observed。范围包含当前任务及直接关联任务；关联 scope 只读。list_untested_assets 仍按是否有 Fact 观察筛选。"
 					if cov.Denominator == 0 {
 						m["pct"] = nil
 						m["status"] = "范围未锚定"
 					} else {
 						m["pct"] = cov.Pct
-	\t\t\t\t}
+					}
 				}
 			}
 			if hosts, err := t.as.HostsByTaskWithSources(t.taskID); err == nil {
@@ -1137,7 +1137,8 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, bool, error) {
 			var b strings.Builder
 			fmt.Fprintf(&b, "意图「%s」绑定的资产未通过测试范围校验，请停止对相关资产进行测试：", it.Summary)
 			for _, h := range hits {
-				fmt.Fprintf(&b, "\n - %s", h.Describe())
+				fmt.Fprintf(&b, "
+ - %s", h.Describe())
 			}
 			return 0, false, fmt.Errorf("%s", b.String())
 		}
@@ -1199,7 +1200,8 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, bool, error) {
 }
 
 func (t *ToolSet) addIntent() actool.CoreTool {
-	return t.writeExpTool("add_intent", "生成【探索方向】写入 frontier，并连入探索链路。对已检索到 reviewed/verified 漏洞模式、或由明确资产观察触发的漏洞测试方向，必须尽量提供结构化 hypothesis：前置条件、触发指标、逐项非破坏性验证步骤、预期证据、不确定性和验收标准；同时绑定 asset_ids。没有足够依据时不要伪造假设，可创建普通侦察意图。每条意图必须提供稳定 coordination_key；同一资产集合、同一调查目标/根因复用同一键，不同技术路线使用不同键。数据库会原子去重 active 意图。\n"+
+	return t.writeExpTool("add_intent", "生成【探索方向】写入 frontier，并连入探索链路。对已检索到 reviewed/verified 漏洞模式、或由明确资产观察触发的漏洞测试方向，必须尽量提供结构化 hypothesis：前置条件、触发指标、逐项非破坏性验证步骤、预期证据、不确定性和验收标准；同时绑定 asset_ids。没有足够依据时不要伪造假设，可创建普通侦察意图。每条意图必须提供稳定 coordination_key；同一资产集合、同一调查目标/根因复用同一键，不同技术路线使用不同键。数据库会原子去重 active 意图。
+"+
 		"★优先批量：一轮筛出的多个新方向放进 intents 数组一次提交（比逐条调用省往返）。返回 ids 数组，与 intents 等长同序（失败项 id=0，详情见 errors）。单条则省略 intents 直接给顶层 summary。",
 		obj(map[string]any{
 			"intents":    map[string]any{"type": "array", "description": "【优先用这个】要新增的探索方向数组，按顺序处理。每个元素字段同下方顶层字段（summary/coordination_key/asset_ids/parent_ids/priority）。返回 ids 与本数组等长、同序；复用已有活动意图时会在 deduplicated 中标记。", "items": map[string]any{"type": "object"}},
@@ -1451,9 +1453,11 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 		}
 		raw, _ := json.Marshal(result)
 		if recorded.Deduplicated {
-			return actool.Text(fmt.Sprintf("finding deduplicated: %d\n%s", recorded.NodeID, raw)), nil
+			return actool.Text(fmt.Sprintf("finding deduplicated: %d
+%s", recorded.NodeID, raw)), nil
 		}
-		return actool.Text(fmt.Sprintf("finding recorded: %d\n%s", recorded.NodeID, raw)), nil
+		return actool.Text(fmt.Sprintf("finding recorded: %d
+%s", recorded.NodeID, raw)), nil
 	})
 }
 
@@ -1528,13 +1532,20 @@ func (t *ToolSet) recordOneFact(it factItem, defaultIntent int64) (int64, error)
 }
 
 func (t *ToolSet) recordFact() actool.CoreTool {
-	return t.writeExpTool("record_fact", "把探索【事实/结论】写入探索图，连到产生它的意图（intent_id）。用于记录探索结果——包括指纹/枚举等【正向结论】，和'端口关闭'/'参数不可注入'/'未发现登录入口'等【否定结论】。\n"+
-		"⚠️一次探索的多个观察要【汇总成一条事实】，不要拆成多条，可以合并成一条事实的就尽量用一条事实表示：summary=对本次结论的总结性一句话，detail=相关细节（可含多个具体项）。例：指纹意图→一条事实 {summary:'识别了 X 站点的技术栈与响应特征', detail:'nginx 1.25 / Vue3 / 200 / title=.. / body_len=..'}，而不是状态码、指纹、标题各记一条。一条意图通常只产出一条事实，拆太碎会让图谱无限膨胀。\n"+
-		"★facts 数组用于一次写多条【彼此不同】的结论（每条可省略 intent_id，默认用顶层 intent_id）。返回 ids 数组，与 facts 等长同序。\n"+
-		"⚠️只写你在工具输出里【真实看到】的结论，不要脑补。evidence 与 confidence 用来防止不准确的结论污染图谱：\n"+
-		"  · evidence=支撑本结论的【一行】关键证据（命令+最能证明的那一两行输出），**务必简洁**——细节已在 detail，这里不要再粘大段输出。\n"+
-		"  · confidence=observed（输出里直接看到）| inferred（据现象推断）。\n"+
-		"  · test_status=observed（仅识别/观察资产）| tested（确实完成了安全测试尝试；必须有 evidence 且 confidence=observed）。仅有指纹、枚举、资产发现不能标 tested；测试结果无论正向或否定都可标 tested。\n"+
+	return t.writeExpTool("record_fact", "把探索【事实/结论】写入探索图，连到产生它的意图（intent_id）。用于记录探索结果——包括指纹/枚举等【正向结论】，和'端口关闭'/'参数不可注入'/'未发现登录入口'等【否定结论】。
+"+
+		"⚠️一次探索的多个观察要【汇总成一条事实】，不要拆成多条，可以合并成一条事实的就尽量用一条事实表示：summary=对本次结论的总结性一句话，detail=相关细节（可含多个具体项）。例：指纹意图→一条事实 {summary:'识别了 X 站点的技术栈与响应特征', detail:'nginx 1.25 / Vue3 / 200 / title=.. / body_len=..'}，而不是状态码、指纹、标题各记一条。一条意图通常只产出一条事实，拆太碎会让图谱无限膨胀。
+"+
+		"★facts 数组用于一次写多条【彼此不同】的结论（每条可省略 intent_id，默认用顶层 intent_id）。返回 ids 数组，与 facts 等长同序。
+"+
+		"⚠️只写你在工具输出里【真实看到】的结论，不要脑补。evidence 与 confidence 用来防止不准确的结论污染图谱：
+"+
+		"  · evidence=支撑本结论的【一行】关键证据（命令+最能证明的那一两行输出），**务必简洁**——细节已在 detail，这里不要再粘大段输出。
+"+
+		"  · confidence=observed（输出里直接看到）| inferred（据现象推断）。
+"+
+		"  · test_status=observed（仅识别/观察资产）| tested（确实完成了安全测试尝试；必须有 evidence 且 confidence=observed）。仅有指纹、枚举、资产发现不能标 tested；测试结果无论正向或否定都可标 tested。
+"+
 		"  · **否定类结论**（不可注入/端口关闭/未发现入口等）只写\"观察 + 试探性读法\"——陈述你实际看到什么，方向是否放弃由规划者综合全局定；务必给 evidence，手段没穷尽或证据弱（含只探一次、看起来像）标 inferred，确已穷尽且直接看到才标 observed。",
 		obj(map[string]any{
 			"facts":      map[string]any{"type": "array", "description": "【有多条不同结论时用】事实数组，元素字段同下方顶层字段（summary/detail/evidence/test_status/confidence/intent_id/asset_ids）；省略 intent_id 则用顶层 intent_id。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
@@ -1652,8 +1663,10 @@ func (t *ToolSet) addOneGoal(it goalItem) (int64, error) {
 // agent 运行时补目标的工具——同一个受管工具,可在 web 端改描述/schema、按 agent 绑定。
 func (t *ToolSet) setGoals() actool.CoreTool {
 	return writeTool("set_goals",
-		"给【本任务】新增探索目标(goal)。目标=最终可交付/可核验的结果,不是攻击步骤或侦察动作。\n"+
-			"★优先批量:多个目标放进 goals 数组一次提交,返回 ids 与之等长同序(失败项 id=0,详情见 errors)。单条则省略 goals 直接给顶层 text。\n"+
+		"给【本任务】新增探索目标(goal)。目标=最终可交付/可核验的结果,不是攻击步骤或侦察动作。
+"+
+			"★优先批量:多个目标放进 goals 数组一次提交,返回 ids 与之等长同序(失败项 id=0,详情见 errors)。单条则省略 goals 直接给顶层 text。
+"+
 			"vulnclass 可选:对应漏洞类(如 SQLi/IDOR),业务逻辑类目标留空。目标是否达成由系统判定标记 met,本工具只负责新增。",
 		obj(map[string]any{
 			"goals":     map[string]any{"type": "array", "description": "【优先用这个】要新增的目标数组,按顺序处理。每个元素:text(必填,一个独立可验证的最终目标)+ vulnclass(可选)。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
@@ -1745,9 +1758,12 @@ func (t *ToolSet) addOneConstraint(it constraintItem) (int64, error) {
 // 端改描述/schema、按 agent 绑定。约束会被注入 planner/worker 的系统提示以约束探索边界。
 func (t *ToolSet) setConstraints() actool.CoreTool {
 	return writeTool("set_constraints",
-		"给【本任务】新增操作约束,用来框定探索边界:type=allow(允许做的操作)或 deny(禁止做的操作)。\n"+
-			"约束=对『可以/不可以做哪些操作』的规定(如『仅测当前端口,不扫其他端口』『禁止对生产库做写操作』『只允许被动侦察』),不是目标、也不是攻击步骤。\n"+
-			"★优先批量:多条放进 constraints 数组一次提交,返回 ids 与之等长同序(失败项 id=0,详情见 errors)。单条则省略 constraints 直接给顶层 text/type。\n"+
+		"给【本任务】新增操作约束,用来框定探索边界:type=allow(允许做的操作)或 deny(禁止做的操作)。
+"+
+			"约束=对『可以/不可以做哪些操作』的规定(如『仅测当前端口,不扫其他端口』『禁止对生产库做写操作』『只允许被动侦察』),不是目标、也不是攻击步骤。
+"+
+			"★优先批量:多条放进 constraints 数组一次提交,返回 ids 与之等长同序(失败项 id=0,详情见 errors)。单条则省略 constraints 直接给顶层 text/type。
+"+
 			"只登记任务目标/描述里【明确写出】的约束,不要臆造;拿不准类型时用 deny(更保守)。",
 		obj(map[string]any{
 			"constraints": map[string]any{"type": "array", "description": "【优先用这个】要新增的约束数组,按顺序处理。每个元素:text(必填,一条约束)+ type(allow|deny)。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
@@ -1793,7 +1809,8 @@ func (t *ToolSet) setConstraints() actool.CoreTool {
 }
 
 func (t *ToolSet) addHint() actool.CoreTool {
-	return t.writeExpTool("add_hint", "把人类/主 agent 的战略提示挂到探索图，规划者下次生成意图时会读到它。\n"+
+	return t.writeExpTool("add_hint", "把人类/主 agent 的战略提示挂到探索图，规划者下次生成意图时会读到它。
+"+
 		"★优先批量：多条提示放进 hints 数组一次提交（比逐条调用省往返）。返回 ids 数组，与 hints 等长同序（失败项 id=0，详情见 errors）。单条则省略 hints 直接给顶层 text。",
 		obj(map[string]any{
 			"hints":        map[string]any{"type": "array", "description": "【优先用这个】要新增的提示数组，按顺序处理。每个元素字段同下方顶层字段（text/asset_ids/traffic_refs）。返回 ids 与本数组等长、同序。", "items": obj(map[string]any{"text": str("提示内容"), "asset_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}}, "traffic_refs": HintTrafficSchema()})},
@@ -1999,10 +2016,14 @@ func traceSteps(acts []db.Activity) []map[string]any {
 // few specific steps. Thinking steps are excluded everywhere.
 func (t *ToolSet) getWorkerTrace() actool.CoreTool {
 	return t.readExpTool("get_worker_trace",
-		"查看某条意图(work)的【执行过程】（区别于 get_worker_output 只给最终结论）。三种用法：\n"+
-			"① 只传 intent_id → 返回该 work 每一步的摘要流（summary≤100字，含 step_id；只是动作轮廓，不含完整输出）；\n"+
-			"② intent_id + q → 只返回命中关键字的步骤摘要（在摘要和完整输出里都搜；仍只给 summary，要看内容用③）；\n"+
-			"③ intent_id + step_ids → 返回这些步骤的完整内容(detail)；一次最多取 5 个，超出只返回前 5 个并在 notice/omitted_step_ids 里告知未取的。\n"+
+		"查看某条意图(work)的【执行过程】（区别于 get_worker_output 只给最终结论）。三种用法：
+"+
+			"① 只传 intent_id → 返回该 work 每一步的摘要流（summary≤100字，含 step_id；只是动作轮廓，不含完整输出）；
+"+
+			"② intent_id + q → 只返回命中关键字的步骤摘要（在摘要和完整输出里都搜；仍只给 summary，要看内容用③）；
+"+
+			"③ intent_id + step_ids → 返回这些步骤的完整内容(detail)；一次最多取 5 个，超出只返回前 5 个并在 notice/omitted_step_ids 里告知未取的。
+"+
 			"典型流程：先①/②定位可疑步骤的 step_id，再用③取其完整输出。不含思考(thinking)步骤。支持直接关联任务的历史 trace；其结果带 source_task_id/inherited=true 且只读。",
 		obj(map[string]any{
 			"intent_id": idp("意图 id（= work 句柄）"),
