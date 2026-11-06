@@ -16,12 +16,12 @@ func intentCoordinationKey(it intentItem, assetIDs []int64) string {
 	assets := append([]int64(nil), assetIDs...)
 	sort.Slice(assets, func(i, j int) bool { return assets[i] < assets[j] })
 	assetParts := make([]string, 0, len(assets))
-	last := int64(-1)
+	last := int64(0)
 	for _, id := range assets {
-		if id <= 0 || id == last {
+		if id <= 0 || (len(assetParts) > 0 && id == last) {
 			continue
 		}
-		assetParts = append(assetParts, strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(stringInt64(id)))))
+		assetParts = append(assetParts, stringInt64(id))
 		last = id
 	}
 	assetScope := strings.Join(assetParts, ",")
