@@ -1126,8 +1126,8 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, bool, error) {
 	}
 	if it.Hypothesis != nil {
 		h := *it.Hypothesis
-		if len(h.VerificationSteps) == 0 || len(h.ExpectedEvidence) == 0 {
-			return 0, false, fmt.Errorf("漏洞假设必须包含 verification_steps 和 expected_evidence")
+		if len(h.VerificationSteps) == 0 || len(h.ExpectedEvidence) == 0 || len(h.AcceptanceCriteria) == 0 {
+			return 0, false, fmt.Errorf("漏洞假设必须包含 verification_steps、expected_evidence 和 acceptance_criteria")
 		}
 		if h.PatternID < 0 {
 			return 0, false, fmt.Errorf("pattern_id 不能为负数")
