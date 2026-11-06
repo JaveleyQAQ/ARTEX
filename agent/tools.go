@@ -411,9 +411,31 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 		hotAtRender = cg.hotSet()
 	}
 	hidden := func(id int64) bool { _, c := covered[id]; return c && !hotAtRender[id] }
+	// Exact per-call spend is attached to each intent so the Planner can weigh
+	// marginal progress against real provider cost. Missing rows mean zero spend.
+	usageRows, _ := t.ts.LLMUsageByIntent()
+	usageByIntent := make(map[int64]db.IntentUsageSummary, len(usageRows))
+	for _, usage := range usageRows {
+		usageByIntent[usage.IntentID] = usage
+	}
+	attachUsage := func(items []map[string]any) {
+		for _, item := range items {
+			id, ok := item["id"].(int64)
+			if !ok { continue }
+			if usage, exists := usageByIntent[id]; exists {
+				item["usage"] = map[string]any{
+					"calls": usage.Calls, "input_tokens": usage.InputTokens,
+					"output_tokens": usage.OutputTokens, "cache_read_tokens": usage.CacheReadTokens,
+					"cache_write_tokens": usage.CacheWriteTokens, "latency_ms": usage.LatencyMs,
+				}
+			}
+		}
+	}
 	const openIntentsCap = 30
 	fr, _ := t.ts.Frontier(openIntentsCap) // priority DESC, id ASC —— 优先级最高的前 N 条；真实总数见 frontier_open
-	out["open_intents"] = compactIntents(fr, parentsOf, yieldsOf)
+	openItems := compactIntents(fr, parentsOf, yieldsOf)
+	attachUsage(openItems)
+	out["open_intents"] = openItems
 	all, _ := t.ts.ListByKind(db.KindIntent, 300)
 	var running, recentDone []*db.Node
 	for _, n := range all {
@@ -427,7 +449,9 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 			recentDone = append(recentDone, n) // 最新在前（all 按 id 降序）；折叠的已剔除，输出时截最新 N
 		}
 	}
-	out["running_intents"] = compactIntents(running, parentsOf, yieldsOf)
+	runningItems := compactIntents(running, parentsOf, yieldsOf)
+	attachUsage(runningItems)
+	out["running_intents"] = runningItems
 	// done_intents_total：已结束意图（done/blocked/exhausted）总数，与 recent_done_intents
 	// 平行命名——后者只是它的最新窗口截断视图。两键并排即自描述："看到的是 N/总数"，
 	// 让 planner 去重时别把"没显示"当成"没派过"，无需在提示词里另行解释。
@@ -516,6 +540,15 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 		recentDoneSummary[i]["hypothesis_status"] = status
 		if outcome, ok := payload["hypothesis_outcome"].(string); ok && outcome != "" {
 			recentDoneSummary[i]["hypothesis_outcome"] = outcome
+		}
+	}
+	for _, item := range recentDoneSummary {
+		if usage, exists := usageByIntent[item["id"].(int64)]; exists {
+			item["usage"] = map[string]any{
+				"calls": usage.Calls, "input_tokens": usage.InputTokens,
+				"output_tokens": usage.OutputTokens, "cache_read_tokens": usage.CacheReadTokens,
+				"cache_write_tokens": usage.CacheWriteTokens, "latency_ms": usage.LatencyMs,
+			}
 		}
 	}
 	out["recent_done_intents"] = recentDoneSummary
