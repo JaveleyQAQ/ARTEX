@@ -2828,6 +2828,14 @@ func (s *Server) tokenStats(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	// Exact per-call ledger grouped by intent. Keep legacy activity/result
+	// aggregates for backward compatibility; expose this alongside them so the
+	// UI can distinguish session snapshots from actual provider calls.
+	intentUsage, err := t.Store.LLMUsageByIntent()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
 	sessions, err := t.Store.TokenStatsBySession()
 	if err != nil {
 		writeErr(w, 500, err.Error())
@@ -2838,7 +2846,7 @@ func (s *Server) tokenStats(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"workers": stats, "sessions": sessions, "total": tokenTotalDTO(total)})
+	writeJSON(w, 200, map[string]any{"workers": stats, "sessions": sessions, "intent_usage": intentUsage, "total": tokenTotalDTO(total)})
 }
 
 // tokenDailyStats returns global token consumption aggregated by calendar day
