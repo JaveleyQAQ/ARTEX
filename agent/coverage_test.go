@@ -56,6 +56,13 @@ func TestCoverageSeparatesObservedAssetsFromSecurityTestedAssets(t *testing.T) {
 	if coverage.Denominator != 1 || coverage.Observed != 1 || coverage.Tested != 1 || coverage.SecurityTested != 0 {
 		t.Fatalf("observation must not count as security-tested: %+v", coverage)
 	}
+	graph, err := d.Assets().BuildCoverageGraph(task.ID, task.ExplorationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(graph.Nodes) != 1 || !graph.Nodes[0].Tested || graph.Nodes[0].SecurityTested {
+		t.Fatalf("coverage graph should distinguish observation from security test: %+v", graph.Nodes)
+	}
 
 	if _, err := tools.recordOneFact(factItem{
 		Summary: "Completed an evidence-backed security test attempt",
@@ -77,6 +84,13 @@ func TestCoverageSeparatesObservedAssetsFromSecurityTestedAssets(t *testing.T) {
 	}
 	if coverage.SecurityTestedPct == nil || *coverage.SecurityTestedPct != 1 {
 		t.Fatalf("security_tested_pct=%v, want 1", coverage.SecurityTestedPct)
+	}
+	graph, err = d.Assets().BuildCoverageGraph(task.ID, task.ExplorationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(graph.Nodes) != 1 || !graph.Nodes[0].SecurityTested {
+		t.Fatalf("coverage graph should mark the asset as security-tested: %+v", graph.Nodes)
 	}
 }
 
