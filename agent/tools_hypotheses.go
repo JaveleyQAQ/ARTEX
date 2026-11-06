@@ -77,6 +77,7 @@ func (t *ToolSet) recordHypothesisResult() actool.CoreTool {
 				"contradicting_evidence": a.ContradictingEvidence,
 				"acceptance_criteria_met": *a.AcceptanceCriteriaMet,
 				"confidence": "observed",
+				"test_status": map[bool]string{true: "tested", false: "observed"}[a.Outcome != "blocked"],
 			}
 			if patternID, ok := hypothesis["pattern_id"]; ok { result["pattern_id"] = patternID }
 			if len(a.Limitations)>0 { result["limitations"] = a.Limitations }
