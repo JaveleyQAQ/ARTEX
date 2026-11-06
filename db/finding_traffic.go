@@ -338,6 +338,7 @@ type RecordedFinding struct {
 	NodeID    int64           `json:"finding_node_id,string"`
 	Traffic   *FindingTraffic `json:"traffic"`
 	Deduplicated bool `json:"deduplicated,omitempty"`
+	CorroborationFact bool `json:"corroboration_fact,omitempty"`
 }
 
 // ctx 由调用方传入本次事务所用的上下文（而非在内部取 context.Background）：
@@ -370,12 +371,13 @@ func RecordFindingTx(ctx context.Context, tx *sql.Tx, in RecordFindingInput, pre
 	fingerprint := FindingFingerprint(in)
 	if in.TaskID > 0 && fingerprint != "" {
 		var existingFindingID, existingNodeID int64
-		err := tx.QueryRow(`SELECT id, node_id FROM findings WHERE task_id=$1 AND fingerprint=$2 FOR UPDATE`, in.TaskID, fingerprint).Scan(&existingFindingID, &existingNodeID)
+		var existingEvidence string
+		err := tx.QueryRow(`SELECT id, node_id, evidence FROM findings WHERE task_id=$1 AND fingerprint=$2 FOR UPDATE`, in.TaskID, fingerprint).Scan(&existingFindingID, &existingNodeID, &existingEvidence)
 		if err == nil {
 			if err := LockFindingEvidenceTx(tx, existingFindingID, nil); err != nil {
 				return nil, err
 			}
-			if strings.TrimSpace(in.Evidence) != "" {
+			if strings.TrimSpace(in.Evidence) != "" && !strings.Contains(existingEvidence, in.Evidence) {
 				if _, err := tx.Exec(`UPDATE findings
 SET evidence = CASE
 		WHEN position($2 in evidence) > 0 THEN evidence
@@ -388,6 +390,7 @@ WHERE id=$1`, existingFindingID, in.Evidence); err != nil {
 				if err := bumpEvidenceVersionTx(tx, existingFindingID); err != nil {
 					return nil, err
 				}
+				factAdded := false
 				if in.IntentID > 0 {
 					factPayload, _ := json.Marshal(map[string]any{
 						"summary": "同一根因的补充验证证据，已归并至漏洞 #" + strconv.FormatInt(existingFindingID, 10),
@@ -403,12 +406,12 @@ VALUES($1,'fact',$2,5,'confirmed',$3) RETURNING id`, in.ExplorationID, string(fa
 VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, in.ExplorationID, in.IntentID, RelYields, factID); err != nil {
 						return nil, err
 					}
+					factAdded = true
 				}
-			}
-			if err := AddFindingTrafficTx(tx, existingFindingID, prepared); err != nil {
+				out := &RecordedFinding{FindingID: existingFindingID, NodeID: existingNodeID, Deduplicated: true, CorroborationFact: factAdded}
+				if err := AddFindingTrafficTx(tx, existingFindingID, prepared); err != nil {
 				return nil, err
 			}
-			out := &RecordedFinding{FindingID: existingFindingID, NodeID: existingNodeID, Deduplicated: true}
 			out.Traffic, err = FindingTrafficTx(tx, existingFindingID)
 			return out, err
 		}
