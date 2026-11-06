@@ -64,7 +64,7 @@ func (t *ToolSet) recordHypothesisResult() actool.CoreTool {
 			if a.Outcome == "confirmed" && !*a.AcceptanceCriteriaMet {
 				return actool.Errorf("confirmed 必须明确满足全部 acceptance_criteria；否则应记录 inconclusive 或 rejected"), nil
 			}
-			if a.Outcome != "confirmed" && a.AcceptanceCriteriaMet {
+			if a.Outcome != "confirmed" && *a.AcceptanceCriteriaMet {
 				return actool.Errorf("只有 outcome=confirmed 才能将 acceptance_criteria_met 设为 true"), nil
 			}
 			_, lifecycle, _, lifecycleErr := t.ts.IntentHypothesisLifecycle(a.IntentID)
