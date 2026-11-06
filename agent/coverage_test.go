@@ -41,8 +41,8 @@ func TestCoverageSeparatesObservedAssetsFromSecurityTestedAssets(t *testing.T) {
 		Summary: "Identified the service and response fingerprint",
 		Evidence: "GET / returned HTTP 200",
 		Confidence: "observed",
-		AssetIDs: []json.RawMessage{mustJSONRaw(assetID)},
-		IntentID: mustJSONRaw(intentID),
+		AssetIDs: []json.RawMessage{coverageJSONRaw(assetID)},
+		IntentID: coverageJSONRaw(intentID),
 	}, intentID)
 	if err != nil {
 		t.Fatal(err)
@@ -62,8 +62,8 @@ func TestCoverageSeparatesObservedAssetsFromSecurityTestedAssets(t *testing.T) {
 		Evidence: "controlled test request returned the observed policy response",
 		TestStatus: "tested",
 		Confidence: "observed",
-		AssetIDs: []json.RawMessage{mustJSONRaw(assetID)},
-		IntentID: mustJSONRaw(intentID),
+		AssetIDs: []json.RawMessage{coverageJSONRaw(assetID)},
+		IntentID: coverageJSONRaw(intentID),
 	}, intentID); err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestRecordFactCannotClaimTestedWithoutDirectEvidence(t *testing.T) {
 	}
 }
 
-func mustJSONRaw(v any) json.RawMessage {
+func coverageJSONRaw(v any) json.RawMessage {
 	raw, err := json.Marshal(v)
 	if err != nil {
 		panic(err)
