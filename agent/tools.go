@@ -1422,7 +1422,9 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 			t.notify()
 		}
 		if recorded.Deduplicated {
-			t.writes.Facts++
+			if recorded.CorroborationFact {
+				t.writes.Facts++
+			}
 		} else {
 			t.writes.Findings++
 		}
