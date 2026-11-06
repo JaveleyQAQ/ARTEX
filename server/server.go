@@ -2817,9 +2817,10 @@ func (s *Server) tokenStats(w http.ResponseWriter, r *http.Request) {
 	t := s.m.ResolveTask(r.URL.Query().Get("task"))
 	if t == nil {
 		writeJSON(w, 200, map[string]any{
-			"workers":  []db.TokenUsage{},
-			"sessions": []db.SessionTokenUsage{},
-			"total":    tokenTotalDTO(db.TokenUsage{}),
+			"workers":      []db.TokenUsage{},
+			"sessions":     []db.SessionTokenUsage{},
+			"intent_usage": []db.IntentUsageSummary{},
+			"total":        tokenTotalDTO(db.TokenUsage{}),
 		})
 		return
 	}
