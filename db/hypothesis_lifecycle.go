@@ -27,9 +27,9 @@ func (s *ExplorationStore) SetIntentHypothesisLifecycle(intentID int64, status, 
 	res, err := s.db.Exec(`
 UPDATE exploration_nodes
 SET payload = payload || jsonb_build_object(
-	'hypothesis_status', $1,
-	'hypothesis_outcome', NULLIF($2, ''),
-	'hypothesis_result_fact_id', NULLIF($3, 0)
+	'hypothesis_status', $1::text,
+	'hypothesis_outcome', NULLIF($2::text, ''),
+	'hypothesis_result_fact_id', NULLIF($3::bigint, 0)
 ), content_version=content_version+1
 WHERE id=$4 AND exploration_id=$5 AND kind='intent' AND payload ? 'hypothesis'`,
 		status, outcome, factID, intentID, s.expID)
