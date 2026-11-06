@@ -328,6 +328,7 @@ func (d *DB) EditFindingTraffic(ctx context.Context, findingID, bindingID, versi
 type RecordFindingInput struct {
 	TaskID, ExplorationID, IntentID                      int64
 	VulnClass, Name, Severity, Summary, Evidence, Worker string
+	RootCauseKey string
 	AssetIDs                                             []int64
 }
 
@@ -335,6 +336,7 @@ type RecordedFinding struct {
 	FindingID int64           `json:"finding_id,string"`
 	NodeID    int64           `json:"finding_node_id,string"`
 	Traffic   *FindingTraffic `json:"traffic"`
+	Deduplicated bool `json:"deduplicated,omitempty"`
 }
 
 // ctx 由调用方传入本次事务所用的上下文（而非在内部取 context.Background）：
@@ -361,7 +363,59 @@ func RecordFindingTx(ctx context.Context, tx *sql.Tx, in RecordFindingInput, pre
 			return nil, errors.New("intent_id 必须是本任务的意图（关联任务意图只读）")
 		}
 	}
-	payload, _ := json.Marshal(map[string]any{"vulnclass": in.VulnClass, "name": in.Name, "severity": in.Severity, "summary": in.Summary, "evidence": map[string]any{"by": in.Worker, "poc": in.Evidence}})
+	if len([]rune(in.RootCauseKey)) > 256 {
+		return nil, errors.New("root_cause_key 不能超过 256 个字符")
+	}
+	fingerprint := FindingFingerprint(in)
+	if in.TaskID > 0 && fingerprint != "" {
+		var existingFindingID, existingNodeID int64
+		err := tx.QueryRow(`SELECT id, node_id FROM findings WHERE task_id=$1 AND fingerprint=$2 FOR UPDATE`, in.TaskID, fingerprint).Scan(&existingFindingID, &existingNodeID)
+		if err == nil {
+			if err := LockFindingEvidenceTx(tx, existingFindingID, nil); err != nil {
+				return nil, err
+			}
+			if strings.TrimSpace(in.Evidence) != "" {
+				if _, err := tx.Exec(`UPDATE findings
+SET evidence = CASE
+		WHEN position($2 in evidence) > 0 THEN evidence
+		WHEN evidence = '' THEN $2
+		ELSE evidence || E'\\n\\n--- corroborating evidence ---\\n\\n' || $2
+END
+WHERE id=$1`, existingFindingID, in.Evidence); err != nil {
+					return nil, err
+				}
+				if err := bumpEvidenceVersionTx(tx, existingFindingID); err != nil {
+					return nil, err
+				}
+				if in.IntentID > 0 {
+					factPayload, _ := json.Marshal(map[string]any{
+						"summary": "同一根因的补充验证证据，已归并至漏洞 #" + strconv.FormatInt(existingFindingID, 10),
+						"evidence": in.Evidence, "duplicate_of_finding_id": existingFindingID,
+						"root_cause_key": in.RootCauseKey, "confidence": "observed",
+					})
+					var factID int64
+					if err := tx.QueryRow(`INSERT INTO exploration_nodes(exploration_id,kind,payload,priority,state,origin)
+VALUES($1,'fact',$2,5,'confirmed',$3) RETURNING id`, in.ExplorationID, string(factPayload), in.Worker).Scan(&factID); err != nil {
+						return nil, err
+					}
+					if _, err := tx.Exec(`INSERT INTO exploration_edges(exploration_id,src_id,rel,dst_id)
+VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, in.ExplorationID, in.IntentID, RelYields, factID); err != nil {
+						return nil, err
+					}
+				}
+			}
+			if err := AddFindingTrafficTx(tx, existingFindingID, prepared); err != nil {
+				return nil, err
+			}
+			out := &RecordedFinding{FindingID: existingFindingID, NodeID: existingNodeID, Deduplicated: true}
+			out.Traffic, err = FindingTrafficTx(tx, existingFindingID)
+			return out, err
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+	}
+	payload, _ := json.Marshal(map[string]any{"vulnclass": in.VulnClass, "name": in.Name, "severity": in.Severity, "summary": in.Summary, "root_cause_key": in.RootCauseKey, "fingerprint": fingerprint, "evidence": map[string]any{"by": in.Worker, "poc": in.Evidence}})
 	out := &RecordedFinding{}
 	if err := tx.QueryRow(`INSERT INTO exploration_nodes(exploration_id,kind,payload,priority,state,origin)
 VALUES($1,'finding',$2,9,'confirmed',$3) RETURNING id`, in.ExplorationID, string(payload), in.Worker).Scan(&out.NodeID); err != nil {
@@ -382,8 +436,8 @@ VALUES($1,'finding',$2,9,'confirmed',$3) RETURNING id`, in.ExplorationID, string
 		assets = []int64{}
 	}
 	raw, _ := json.Marshal(assets)
-	if err := tx.QueryRow(`INSERT INTO findings(task_id,node_id,vulnclass,name,severity,summary,evidence,worker,asset_ids)
-VALUES(NULLIF($1,0),$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`, in.TaskID, out.NodeID, in.VulnClass, in.Name, in.Severity, in.Summary, in.Evidence, in.Worker, string(raw)).Scan(&out.FindingID); err != nil {
+	if err := tx.QueryRow(`INSERT INTO findings(task_id,node_id,vulnclass,name,severity,summary,evidence,worker,asset_ids,fingerprint)
+VALUES(NULLIF($1,0),$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`, in.TaskID, out.NodeID, in.VulnClass, in.Name, in.Severity, in.Summary, in.Evidence, in.Worker, string(raw), fingerprint).Scan(&out.FindingID); err != nil {
 		return nil, err
 	}
 	// 在**同一事务**里登记一条推送事件：提交即保证「漏洞落库」与「推送任务存在」
