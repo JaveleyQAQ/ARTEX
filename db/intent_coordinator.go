@@ -27,7 +27,7 @@ func (s *ExplorationStore) AddIntentCoordinated(payload map[string]any, priority
 
 	// Exploration IDs are unique within this database and provide a stable
 	// per-task lock namespace. The lock is released automatically on commit/rollback.
-	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock($1)`, s.expID); err != nil {
+	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock($1)`, -s.expID); err != nil {
 		return 0, false, fmt.Errorf("lock intent coordinator: %w", err)
 	}
 
@@ -38,6 +38,7 @@ FROM exploration_nodes
 WHERE exploration_id=$1
   AND kind='intent'
   AND state IN ('open','running')
+  AND COALESCE(payload->>'coordination_key','') <> ''
   AND payload->>'coordination_key'=$2
 ORDER BY id
 LIMIT 1
