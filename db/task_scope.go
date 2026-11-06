@@ -268,9 +268,10 @@ type CoverageAsset struct {
 
 // CoverageByType is per-asset-type coverage: total in scope vs tested.
 type CoverageByType struct {
-	Type   string `json:"type"`
-	Total  int    `json:"total"`
-	Tested int    `json:"tested"`
+	Type           string `json:"type"`
+	Total          int    `json:"total"`
+	Tested         int    `json:"tested"` // legacy alias: any fact observed on this asset
+	SecurityTested int    `json:"security_tested"` // explicit evidence-backed security test attempt
 }
 
 // Coverage is a task's rough asset test coverage — a reference figure for the agent,
@@ -280,8 +281,10 @@ type Coverage struct {
 	Enabled     bool             `json:"enabled"`     // 资产覆盖度功能是否开启；false 时其余字段为零值
 	ScopeRows   int              `json:"scope_rows"`  // 0 → 范围未锚定
 	Denominator int              `json:"denominator"` // 范围内资产数
-	Tested      int              `json:"tested"`      // 已测(约)
-	Pct         *float64         `json:"pct"`         // 覆盖度；分母 0 时 null
+	Tested            int              `json:"tested"` // legacy alias: assets with any fact observation
+	SecurityTested    int              `json:"security_tested"` // assets with explicit evidence-backed security test attempts
+	Pct               *float64         `json:"pct"` // legacy observed-asset ratio
+	SecurityTestedPct *float64         `json:"security_tested_pct"`         // 覆盖度；分母 0 时 null
 	ByType      []CoverageByType `json:"by_type"`     // 按资产类型的 总数/已测
 }
 
@@ -321,6 +324,14 @@ tested AS (
   FROM exploration_anchors ea
   JOIN exploration_nodes en ON en.id = ea.node_id
   WHERE en.exploration_id = $2 AND en.kind = 'fact'
+),
+security_tested AS (
+  SELECT DISTINCT ea.asset_id
+  FROM exploration_anchors ea
+  JOIN exploration_nodes en ON en.id = ea.node_id
+  WHERE en.exploration_id = $2 AND en.kind = 'fact'
+    AND en.payload->>'test_status' = 'tested'
+    AND COALESCE(en.payload->>'evidence', '') <> ''
 )`
 
 // TaskCoverage computes rough per-type coverage for a task. taskID indexes
@@ -330,7 +341,8 @@ func (s *AssetStore) TaskCoverage(taskID, expID int64) (*Coverage, error) {
 	_ = s.db.QueryRow(`SELECT count(*) FROM task_scope WHERE task_id=$1`, taskID).Scan(&cov.ScopeRows)
 	rows, err := s.db.Query(`WITH `+covTargetCTE+`
 SELECT t.type, count(*) AS total,
-       count(*) FILTER (WHERE t.id IN (SELECT asset_id FROM tested)) AS tested
+       count(*) FILTER (WHERE t.id IN (SELECT asset_id FROM tested)) AS tested,
+       count(*) FILTER (WHERE t.id IN (SELECT asset_id FROM security_tested)) AS security_tested
 FROM target t GROUP BY t.type ORDER BY t.type`, taskID, expID)
 	if err != nil {
 		return nil, err
@@ -338,12 +350,13 @@ FROM target t GROUP BY t.type ORDER BY t.type`, taskID, expID)
 	defer rows.Close()
 	for rows.Next() {
 		var bt CoverageByType
-		if err := rows.Scan(&bt.Type, &bt.Total, &bt.Tested); err != nil {
+		if err := rows.Scan(&bt.Type, &bt.Total, &bt.Tested, &bt.SecurityTested); err != nil {
 			return nil, err
 		}
 		cov.ByType = append(cov.ByType, bt)
 		cov.Denominator += bt.Total
 		cov.Tested += bt.Tested
+		cov.SecurityTested += bt.SecurityTested
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -351,6 +364,8 @@ FROM target t GROUP BY t.type ORDER BY t.type`, taskID, expID)
 	if cov.Denominator > 0 {
 		p := float64(cov.Tested) / float64(cov.Denominator)
 		cov.Pct = &p
+		securityPct := float64(cov.SecurityTested) / float64(cov.Denominator)
+		cov.SecurityTestedPct = &securityPct
 	}
 	return cov, nil
 }
