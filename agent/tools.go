@@ -1175,7 +1175,7 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 	return t.writeExpTool("add_intent", "生成【探索方向】写入 frontier，并连入探索链路。对已检索到 reviewed/verified 漏洞模式、或由明确资产观察触发的漏洞测试方向，必须尽量提供结构化 hypothesis：前置条件、触发指标、逐项非破坏性验证步骤、预期证据、不确定性和验收标准；同时绑定 asset_ids。没有足够依据时不要伪造假设，可创建普通侦察意图。每条意图必须提供稳定 coordination_key；同一资产集合、同一调查目标/根因复用同一键，不同技术路线使用不同键。数据库会原子去重 active 意图。\n"+
 		"★优先批量：一轮筛出的多个新方向放进 intents 数组一次提交（比逐条调用省往返）。返回 ids 数组，与 intents 等长同序（失败项 id=0，详情见 errors）。单条则省略 intents 直接给顶层 summary。",
 		obj(map[string]any{
-			"intents":    map[string]any{"type": "array", "description": "【优先用这个】要新增的探索方向数组，按顺序处理。每个元素字段同下方顶层字段（summary/asset_ids/parent_ids/priority）。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
+			"intents":    map[string]any{"type": "array", "description": "【优先用这个】要新增的探索方向数组，按顺序处理。每个元素字段同下方顶层字段（summary/coordination_key/asset_ids/parent_ids/priority）。返回 ids 与本数组等长、同序；复用已有活动意图时会在 deduplicated 中标记。", "items": map[string]any{"type": "object"}},
 			"summary":    str("[单条] 一句话描述这个探索方向：做什么+为什么。已写清方向即可，不依赖资产 id。"),
 			"coordination_key": str("稳定的工作单元键：同一资产集合上同一调查目标/根因必须复用同一个键；不同漏洞类别、不同参数或本质不同的调查路线使用不同键。不要随机生成。数据库会按资产集合组合此键，并原子阻止重复的 open/running 意图。"),
 			"asset_ids":  map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "本方向要测试/攻击的【目标资产 id】（**尽量传**，0/1/多个；是 list_assets 返回的资产 id，不是探索节点 id）：这条探索方向针对哪些资产（站点/接口/参数/主机等）。只要方向围绕某些具体资产就务必传上——它是「这条探索打哪些目标」的结构化标记，用于覆盖去重、把意图连入资产链路。仅当纯全局侦察、确实没有具体目标资产时才留空。"},
