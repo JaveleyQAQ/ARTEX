@@ -1444,6 +1444,9 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 			}
 		}
 		raw, _ := json.Marshal(result)
+		if recorded.Deduplicated {
+			return actool.Text(fmt.Sprintf("finding deduplicated: %d\n%s", recorded.NodeID, raw)), nil
+		}
 		return actool.Text(fmt.Sprintf("finding recorded: %d\n%s", recorded.NodeID, raw)), nil
 	})
 }
