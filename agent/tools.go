@@ -500,7 +500,22 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 	if len(recentDone) > recentDoneCap {
 		recentDone = recentDone[:recentDoneCap]
 	}
-	out["recent_done_intents"] = compactIntents(recentDone, parentsOf, yieldsOf)
+	recentDoneSummary := compactIntents(recentDone, parentsOf, yieldsOf)
+	for i, intent := range recentDone {
+		var payload map[string]any
+		if json.Unmarshal(intent.Payload, &payload) != nil || payload["hypothesis"] == nil {
+			continue
+		}
+		status, _ := payload["hypothesis_status"].(string)
+		if status == "" {
+			status = "pending"
+		}
+		recentDoneSummary[i]["hypothesis_status"] = status
+		if outcome, ok := payload["hypothesis_outcome"].(string); ok && outcome != "" {
+			recentDoneSummary[i]["hypothesis_outcome"] = outcome
+		}
+	}
+	out["recent_done_intents"] = recentDoneSummary
 	// cold-digest §6.1: 折叠冷区的 digest body，按最新成员时间降序取前 N；被截的更旧 digest
 	// 只给裸 id（仍可 expand_digest 展开），避免冷区唯一出口被无限拉长。
 	const coldDigestsCap = 15
