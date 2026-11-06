@@ -548,7 +548,7 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 			if !t.coverageDisabled {
 				if cov, err := t.as.TaskCoverageWithSources(t.taskID); err == nil {
 					m["denominator"] = cov.Denominator
-					m["observed"] = cov.Tested
+					m["observed"] = cov.Observed
 					m["tested"] = cov.SecurityTested
 					m["security_tested_pct"] = cov.SecurityTestedPct
 					m["by_type"] = cov.ByType
@@ -908,7 +908,7 @@ func (t *ToolSet) relatedTaskOverviews() []map[string]any {
 			if coverage, err := t.as.TaskCoverage(source.Task.TaskID, source.Task.ExplorationID); err == nil {
 				item["asset_coverage"] = map[string]any{
 					"denominator":          coverage.Denominator,
-					"observed":             coverage.Tested,
+					"observed":             coverage.Observed,
 					"tested":               coverage.SecurityTested,
 					"pct":                  coverage.Pct,
 					"security_tested_pct":  coverage.SecurityTestedPct,
