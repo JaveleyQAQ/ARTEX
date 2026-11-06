@@ -146,8 +146,10 @@ FROM target GROUP BY target.type ORDER BY target.type`, taskID)
 		if err := rows.Scan(&byType.Type, &byType.Total, &byType.Tested, &byType.SecurityTested); err != nil {
 			return nil, err
 		}
+		byType.Observed = byType.Tested
 		cov.ByType = append(cov.ByType, byType)
 		cov.Denominator += byType.Total
+		cov.Observed += byType.Observed
 		cov.Tested += byType.Tested
 		cov.SecurityTested += byType.SecurityTested
 	}
