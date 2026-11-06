@@ -548,15 +548,12 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 			if !t.coverageDisabled {
 				if cov, err := t.as.TaskCoverageWithSources(t.taskID); err == nil {
 					m["denominator"] = cov.Denominator
-					m["tested"] = cov.Tested
-					m["by_type"] = cov.ByType
-					m["note"] = "coverage资产测试覆盖度（包括接口等各种相关资产），粗略估计、仅供参考：包含当前任务与直接关联任务的 scope、事实锚点；关联 scope 只读。容器型资产/大量枚举会让它偏低，勿据此认为已测完；可用 add_task_scope 增补本任务范围、list_untested_assets 看未测资产【通常不调用list_untested_assets，按照任务推进即可】；"
+					m["observed"] = cov.Tested\n\t\t\t\t\tm["tested"] = cov.SecurityTested\n\t\t\t\t\tm["security_tested_pct"] = cov.SecurityTestedPct\n\t\t\t\t\tm["by_type"] = cov.ByType\n\t\t\t\t\tm["note"] = "observed=至少有一条 Fact 关联该资产；tested=Worker 明确记录完成了有直接证据的安全测试尝试（不代表发现漏洞）。仅指纹/枚举/资产发现不会增加 tested。历史 Fact 未显式标记 test_status 时只计入 observed。范围包含当前任务及直接关联任务；关联 scope 只读。list_untested_assets 仍按是否有 Fact 观察筛选。"
 					if cov.Denominator == 0 {
 						m["pct"] = nil
 						m["status"] = "范围未锚定"
 					} else {
-						m["pct"] = cov.Pct
-					}
+						m["pct"] = cov.Pct\n\t\t\t\t\t}
 				}
 			}
 			if hosts, err := t.as.HostsByTaskWithSources(t.taskID); err == nil {
@@ -1463,6 +1460,7 @@ type factItem struct {
 	Summary    string            `json:"summary"`
 	Detail     string            `json:"detail"`
 	Evidence   string            `json:"evidence"`   // 一行关键证据（命令+关键输出行），支撑结论、便于事后核对
+	TestStatus string            `json:"test_status"` // observed（仅资产观察/信息收集）| tested（完成了有证据的安全测试尝试）
 	Confidence string            `json:"confidence"` // observed（直接看到）| inferred（据现象推断）
 	IntentID   json.RawMessage   `json:"intent_id"`
 	AssetIDs   []json.RawMessage `json:"asset_ids"`
@@ -1481,6 +1479,22 @@ func (t *ToolSet) recordOneFact(it factItem, defaultIntent int64) (int64, error)
 	if e := strings.TrimSpace(it.Evidence); e != "" {
 		payload["evidence"] = e
 	}
+	testStatus := strings.ToLower(strings.TrimSpace(it.TestStatus))
+	if testStatus == "" {
+		testStatus = "observed"
+	}
+	if testStatus != "observed" && testStatus != "tested" {
+		return 0, fmt.Errorf("test_status 必须是 observed 或 tested")
+	}
+	if testStatus == "tested" {
+		if strings.TrimSpace(it.Evidence) == "" {
+			return 0, fmt.Errorf("test_status=tested 必须提供可复核 evidence")
+		}
+		if strings.ToLower(strings.TrimSpace(it.Confidence)) != "observed" {
+			return 0, fmt.Errorf("test_status=tested 必须是 confidence=observed 的直接观察结果")
+		}
+	}
+	payload["test_status"] = testStatus
 	if c := strings.TrimSpace(it.Confidence); c != "" {
 		payload["confidence"] = c
 	}
@@ -1512,14 +1526,14 @@ func (t *ToolSet) recordFact() actool.CoreTool {
 		"★facts 数组用于一次写多条【彼此不同】的结论（每条可省略 intent_id，默认用顶层 intent_id）。返回 ids 数组，与 facts 等长同序。\n"+
 		"⚠️只写你在工具输出里【真实看到】的结论，不要脑补。evidence 与 confidence 用来防止不准确的结论污染图谱：\n"+
 		"  · evidence=支撑本结论的【一行】关键证据（命令+最能证明的那一两行输出），**务必简洁**——细节已在 detail，这里不要再粘大段输出。\n"+
-		"  · confidence=observed（输出里直接看到）| inferred（据现象推断）。\n"+
+		"  · confidence=observed（输出里直接看到）| inferred（据现象推断）。\n"+\n\t\t"  · test_status=observed（仅识别/观察资产）| tested（确实完成了安全测试尝试；必须有 evidence 且 confidence=observed）。仅有指纹、枚举、资产发现不能标 tested；测试结果无论正向或否定都可标 tested。\n"+
 		"  · **否定类结论**（不可注入/端口关闭/未发现入口等）只写\"观察 + 试探性读法\"——陈述你实际看到什么，方向是否放弃由规划者综合全局定；务必给 evidence，手段没穷尽或证据弱（含只探一次、看起来像）标 inferred，确已穷尽且直接看到才标 observed。",
 		obj(map[string]any{
-			"facts":      map[string]any{"type": "array", "description": "【有多条不同结论时用】事实数组，元素字段同下方顶层字段（summary/detail/evidence/confidence/intent_id/asset_ids）；省略 intent_id 则用顶层 intent_id。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
+			"facts":      map[string]any{"type": "array", "description": "【有多条不同结论时用】事实数组，元素字段同下方顶层字段（summary/detail/evidence/test_status/confidence/intent_id/asset_ids）；省略 intent_id 则用顶层 intent_id。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
 			"summary":    str("对本次探索结论的【总结性一句话】（是对 detail 的概括）"),
 			"intent_id":  idp("产生本事实的意图 id（你领到的意图；批量时作为各条默认）"),
 			"detail":     str("本事实的相关细节：把这次探索的多个观察事实都写进这里"),
-			"evidence":   str("【一行】关键证据：命令 + 最能证明结论的那一两行输出。务必简洁，不要粘大段输出（细节放 detail）。"),
+			"evidence":   str("【一行】关键证据：命令 + 最能证明结论的那一两行输出。务必简洁，不要粘大段输出（细节放 detail）。"),\n\t\t\t"test_status": map[string]any{"type":"string","enum":[]string{"observed","tested"},"description":"observed=仅发现/观察资产；tested=确实完成安全测试尝试，必须同时提供 evidence 且 confidence=observed。未进行安全测试时省略或填 observed。"},
 			"confidence": str("observed（输出里直接看到）| inferred（据现象推断）。否定结论务必如实标注。"),
 			"asset_ids":  map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "相关资产 id（可选，0/1/多个）：该事实涉及哪些资产"},
 		}),
