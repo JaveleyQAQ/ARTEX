@@ -34,6 +34,9 @@ func TestRecordHypothesisResultPersistsOutcomeAndEvidence(t *testing.T) {
 		"outcome":"inconclusive",
 		"summary":"second test identity could not be provisioned",
 		"evidence":"HTTP 403 from identity bootstrap; no cross-user object request was made",
+		"supporting_evidence":[],
+		"contradicting_evidence":["Identity bootstrap was denied; the cross-user condition remains untested"],
+		"acceptance_criteria_met":false,
 		"limitations":["second identity unavailable"]
 	}`), nil)
 	if err != nil { t.Fatal(err) }
