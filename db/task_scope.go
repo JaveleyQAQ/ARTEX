@@ -387,7 +387,8 @@ type CoverageGraphNode struct {
 	Key         string `json:"key"`
 	Kind        string `json:"kind"` // company|root_domain|subdomain|ip|service|app|endpoint
 	Label       string `json:"label"`
-	Tested      bool   `json:"tested"`
+	Tested         bool   `json:"tested"` // any Fact observation
+	SecurityTested bool   `json:"security_tested"` // explicit evidence-backed security test
 	InScope     bool   `json:"in_scope"`
 	AssetID     int64  `json:"asset_id,omitempty"` // 0 for company / synthetic root
 	CompanyID   int64  `json:"company_id,omitempty"`
@@ -449,7 +450,8 @@ SELECT a.id, a.type, COALESCE(a.company_id,0),
        COALESCE(a.domain,''), COALESCE(a.root_domain,''), COALESCE(a.ip,''),
        COALESCE(a.url,''), COALESCE(a.port,0), COALESCE(a.service_type,''),
        COALESCE(a.app_name,''), COALESCE(a.page_title,''), COALESCE(a.status_code,0),
-       (a.id IN (SELECT asset_id FROM tested)) AS tested
+       (a.id IN (SELECT asset_id FROM tested)) AS tested,
+       (a.id IN (SELECT asset_id FROM security_tested)) AS security_tested
 FROM assets a JOIN target t ON t.id = a.id
 ORDER BY a.id`, taskID)
 	if err != nil {
@@ -480,7 +482,7 @@ ORDER BY a.id`, taskID)
 		var companyID int64
 		if err := rows.Scan(&n.AssetID, &n.Kind, &companyID,
 			&n.Domain, &n.RootDomain, &n.IP, &n.URL, &n.Port, &n.ServiceType,
-			&n.AppName, &n.PageTitle, &n.StatusCode, &n.Tested); err != nil {
+			&n.AppName, &n.PageTitle, &n.StatusCode, &n.Tested, &n.SecurityTested); err != nil {
 			return nil, err
 		}
 		n.Key = assetKey(n.AssetID)
