@@ -15,6 +15,9 @@ func (s *ExplorationStore) AddIntentCoordinated(payload map[string]any, priority
 	if coordinationKey == "" {
 		return 0, false, fmt.Errorf("coordination_key 不能为空")
 	}
+	if len(coordinationKey) > 256 {
+		return 0, false, fmt.Errorf("coordination_key 不能超过 256 字节")
+	}
 	if origin == "" {
 		origin = "planner"
 	}
