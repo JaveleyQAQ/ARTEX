@@ -362,3 +362,41 @@ WHERE intent_id=$1 AND exploration_id=$2`, intentID, s.expID).Scan(
 		&usage.CacheReadTokens, &usage.CacheWriteTokens, &usage.LatencyMs)
 	return usage, err
 }
+
+type IntentUsageSummary struct {
+	IntentID int64 `json:"intent_id"`
+	Summary string `json:"summary"`
+	State string `json:"state"`
+	Calls int `json:"calls"`
+	InputTokens int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	CacheReadTokens int `json:"cache_read_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens"`
+	LatencyMs int64 `json:"latency_ms"`
+}
+
+// LLMUsageByIntent reports exact provider-call usage for every intent in this
+// exploration. Unlike activity result snapshots, llm_usage is one row per call.
+func (s *ExplorationStore) LLMUsageByIntent() ([]IntentUsageSummary, error) {
+	rows, err := s.db.Query(`
+SELECT n.id, COALESCE(n.payload->>'summary',''), COALESCE(n.state,''),
+       COUNT(u.id), COALESCE(SUM(u.input_tokens),0), COALESCE(SUM(u.output_tokens),0),
+       COALESCE(SUM(u.cache_read),0), COALESCE(SUM(u.cache_write),0),
+       COALESCE(SUM(u.latency_ms),0)
+FROM exploration_nodes n
+LEFT JOIN llm_usage u ON u.intent_id=n.id AND u.exploration_id=n.exploration_id
+WHERE n.exploration_id=$1 AND n.kind='intent'
+GROUP BY n.id, n.payload, n.state
+ORDER BY COALESCE(SUM(u.input_tokens)+SUM(u.output_tokens),0) DESC, n.id DESC`, s.expID)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	out := []IntentUsageSummary{}
+	for rows.Next() {
+		var item IntentUsageSummary
+		if err := rows.Scan(&item.IntentID, &item.Summary, &item.State, &item.Calls,
+			&item.InputTokens, &item.OutputTokens, &item.CacheReadTokens,
+			&item.CacheWriteTokens, &item.LatencyMs); err != nil { return nil, err }
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
