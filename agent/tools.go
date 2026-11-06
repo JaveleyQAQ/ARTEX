@@ -23,8 +23,8 @@ func compactIntents(ns []*db.Node, parentsOf, yieldsOf map[int64][]int64) []map[
 		var p map[string]any
 		_ = json.Unmarshal(n.Payload, &p)
 		m := map[string]any{"id": n.ID, "summary": p["summary"], "state": n.State}
-		if key, ok := p["coordination_key"].(string); ok && key != "" {
-			m["coordination_key"] = key
+		if label, ok := p["coordination_label"].(string); ok && label != "" {
+			m["coordination_key"] = label
 		}
 		if n.Inherited {
 			m["source_task_id"] = n.SourceTaskID
@@ -1151,6 +1151,7 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, bool, error) {
 		payload["hypothesis"] = h
 	}
 	coordinationKey := intentCoordinationKey(it, anchors)
+	payload["coordination_label"] = intentCoordinationLabel(it)
 	id, created, err := t.ts.AddIntentCoordinated(payload, priority, anchors, "planner", coordinationKey)
 	if err != nil {
 		return 0, false, err
