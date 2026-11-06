@@ -8,6 +8,25 @@ import (
 	"github.com/Autumn-27/artex/db"
 )
 
+
+func TestIntentCoordinationKeyIsStableAndAssetScoped(t *testing.T) {
+	base := intentItem{Summary: "check object authorization", CoordinationKey: "  endpoint-a | authz | object-read "}
+	reordered := intentItem{Summary: "different wording", CoordinationKey: "endpoint-a | authz | object-read"}
+	first := intentCoordinationKey(base, []int64{9, 3, 9})
+	second := intentCoordinationKey(reordered, []int64{3, 9})
+	if first != second {
+		t.Fatalf("key should normalize whitespace and asset order: %q != %q", first, second)
+	}
+	otherAssets := intentCoordinationKey(reordered, []int64{3, 10})
+	if first == otherAssets {
+		t.Fatalf("different asset sets must not share a coordination key: %q", first)
+	}
+	otherWork := intentCoordinationKey(intentItem{Summary: base.Summary, CoordinationKey: "endpoint-a|authz|csrf"}, []int64{3, 9})
+	if first == otherWork {
+		t.Fatalf("different investigation dimensions must not share a coordination key: %q", first)
+	}
+}
+
 func TestAddIntentToolDeduplicatesSameCoordinatedWorkUnit(t *testing.T) {
 	dsn, _, err := db.DSN()
 	if err != nil {
