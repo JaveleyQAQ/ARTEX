@@ -377,12 +377,13 @@ func RecordFindingTx(ctx context.Context, tx *sql.Tx, in RecordFindingInput, pre
 			if err := LockFindingEvidenceTx(tx, existingFindingID, nil); err != nil {
 				return nil, err
 			}
+			factAdded := false
 			if strings.TrimSpace(in.Evidence) != "" && !strings.Contains(existingEvidence, in.Evidence) {
 				if _, err := tx.Exec(`UPDATE findings
 SET evidence = CASE
 		WHEN position($2 in evidence) > 0 THEN evidence
 		WHEN evidence = '' THEN $2
-		ELSE evidence || E'\n\n--- corroborating evidence ---\n\n' || $2
+		ELSE evidence || E'\\n\\n--- corroborating evidence ---\\n\\n' || $2
 END
 WHERE id=$1`, existingFindingID, in.Evidence); err != nil {
 					return nil, err
@@ -390,7 +391,6 @@ WHERE id=$1`, existingFindingID, in.Evidence); err != nil {
 				if err := bumpEvidenceVersionTx(tx, existingFindingID); err != nil {
 					return nil, err
 				}
-				factAdded := false
 				if in.IntentID > 0 {
 					factPayload, _ := json.Marshal(map[string]any{
 						"summary": "同一根因的补充验证证据，已归并至漏洞 #" + strconv.FormatInt(existingFindingID, 10),
@@ -408,8 +408,9 @@ VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, in.ExplorationID, in.IntentID, RelY
 					}
 					factAdded = true
 				}
-				out := &RecordedFinding{FindingID: existingFindingID, NodeID: existingNodeID, Deduplicated: true, CorroborationFact: factAdded}
-				if err := AddFindingTrafficTx(tx, existingFindingID, prepared); err != nil {
+			}
+			out := &RecordedFinding{FindingID: existingFindingID, NodeID: existingNodeID, Deduplicated: true, CorroborationFact: factAdded}
+			if err := AddFindingTrafficTx(tx, existingFindingID, prepared); err != nil {
 				return nil, err
 			}
 			out.Traffic, err = FindingTrafficTx(tx, existingFindingID)
