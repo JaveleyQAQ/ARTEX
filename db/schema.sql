@@ -241,6 +241,12 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_expnodes_part     ON exploration_nodes(exploration_id, kind);
 CREATE INDEX IF NOT EXISTS idx_expnodes_frontier ON exploration_nodes(exploration_id, priority DESC)
     WHERE kind='intent' AND state='open';
+-- Active work lookup for the Intent Coordinator. The advisory lock serializes
+-- admissions; this partial index keeps the authoritative active-key lookup cheap.
+CREATE INDEX IF NOT EXISTS idx_expnodes_active_coordination
+    ON exploration_nodes(exploration_id, (payload->>'coordination_key'))
+    WHERE kind='intent' AND state IN ('open','running')
+      AND COALESCE(payload->>'coordination_key','') <> '';
 DROP TRIGGER IF EXISTS trg_expnodes_upd ON exploration_nodes;
 CREATE TRIGGER trg_expnodes_upd BEFORE UPDATE ON exploration_nodes
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
