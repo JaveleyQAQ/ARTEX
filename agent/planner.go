@@ -304,16 +304,17 @@ const plannerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
 
 任务目标：{{.Goal}}
 
-**本轮该产出几个意图（先想清楚这条）**：
-- **硬底线（最高优先）**：只要【目标未达成】且【当前没有任何 open 或 running 意图】（frontier_open=0 且 running_intents 为空），本轮就【必须】产出至少一个向目标推进的意图——没有在跑的 work 可等、也没有在排队的方向时，产出 0 意图=任务停摆；哪怕已知方向都只在 recent_done 里，也要据下面 done/exhausted/blocked 的判断另开一条或续派一条。
-- 硬底线之外，**产出 0 个意图是正常结果，但要有正当理由**（不是"少派更稳"的默认）：①**已覆盖**——你想到的方向都已被仍在 open/running 的意图处理（换措辞重复生成已存在的意图是严重错误）；②**等待依赖**——下一步依赖当前在跑 work 的产出、而它还没出来（此时硬派会让下游拿不到前置而空转，应等下次唤醒图更新后再派）。
-- 反过来：确有【未覆盖、且不依赖在跑 work】的新方向，或目标未达成且范围内仍有未测面，就该派——别把 0 意图当偷懒的默认。
+**本轮该产出几个意图（先评估边际收益与成本）**：
+- 不存在“目标未达成就必须继续派单”的硬性规则。目标未达成只是说明尚未证明完成，不代表无限追加探索一定有价值；当 frontier_open=0 且 running_intents 为空时，必须先审查 recent_done 的真实产出、证据质量、失败/阻塞原因和累计 usage，再决定继续还是暂缓。
+- **成本/收益核对（必须执行）**：open/running/recent_done 中的每条意图都可能带 usage（真实 per-call 调用数、输入/输出/cache token 与累计 provider latency），并带 parents/yields。将 usage 与该意图产生的 fact/finding、覆盖的新资产/调查维度及目标进展对照；否定事实、假设被反证、确认某条路线不可行都算有效进展，不能只用 finding 数量衡量。
+- 如果近期多个已结束意图消耗明显但没有产生新的可核验证据、没有缩小未知范围，或只是重复工具失败/重复同一观察：不要为了让任务“看起来在运行”而换措辞重派。说明具体卡点/已耗成本，产出 0 个意图并等待新证据或人工调整目标/范围。不要仅凭 token 高就否定有价值的深度调查。
+- 只有存在【材料性新证据支持、尚未覆盖且预期收益足以 justify 成本】的新方向时才派；若下一步依赖正在运行的 work，则等待其结果。没有新方向时，0 意图是合法的规划结论，不等于任务目标已达成。
 
 **每次唤醒的决策流程**：
 
 1. **完整态势已附在本提示下方**（就是 graph_overview 的返回，无需再调它）：task（原始标题+目标/根节点）、资产计数、goals+状态、open/running/recent_done 意图、sites_without_endpoints（无端点的站点，提示可能待探的方向）、facts（探索事实数，与漏洞是两类）、recent_facts（{id,summary,confidence?}）。
    - **范围**：探索节点（goals/意图/facts/findings）只含本任务；**资产图全局共享**（多任务同一份，资产计数是全局在范围内的、非本任务独有）——出现非本任务相关的资产时忽略。
-   - **血缘**：每个意图带 parents（上游：派生自哪些事实/意图）和 yields（下游：产生了哪些事实/发现），recent_facts 每条带 from_intent；据此理解"哪些事实来自哪个方向、能否综合出新方向"。
+   - **血缘**：每个意图带 parents/yields，并尽可能带 usage（真实 LLM 调用数、输入/输出/cache tokens、累计 latency）；用它判断每单位成本带来的新增事实/发现、资产覆盖或反证，禁止把 activity 累计快照当成逐次调用账本，recent_facts 每条带 from_intent；据此理解"哪些事实来自哪个方向、能否综合出新方向"。
    - **否定/存疑观察**（recent_facts 里"端口关闭/不可注入"等）是 worker 的观察、不是定论：采信前先 node_detail(id) 看 evidence——evidence 扎实、confidence=observed 且手段已穷尽的才视为该方向暂时封住；evidence 缺失、只是"看起来像/只探一次"、或 confidence=inferred 的，按【尚未探明】处理，若在范围内且无其它意图覆盖，默认派一条复核意图去证实或推翻（**同一否定方向至多复核一次**；复核后仍为否定、且证据合理，就尊重该结论、不再派）。
    - **要更深细节才按需调**：list_facts（分页，最新在前，默认 20，可 q 过滤、before 翻页，带 total/has_more）、list_findings（全部漏洞）、node_detail(id)（完整证据/详情；列表/recent_facts 只给摘要）、list_assets（pull：q 搜索、type/company_id/task_id 过滤、分页，或 id/ids 直取）、asset_neighbors。资产全局共享，别默认拉全量。
 
