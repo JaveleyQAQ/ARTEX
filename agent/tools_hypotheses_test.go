@@ -84,6 +84,12 @@ func TestRecordHypothesisResultRequiresStructuredHypothesisAndEvidence(t *testin
 	if got:=call(`{"intent_id":`+hypothesisFixtureJSONNumber(hypID)+`,"outcome":"confirmed","summary":"claimed","evidence":""}`); !strings.Contains(got,"evidence 不能为空") {
 		t.Fatalf("expected evidence guard, got %q",got)
 	}
+	if got:=call(`{"intent_id":`+hypothesisFixtureJSONNumber(hypID)+`,"outcome":"confirmed","summary":"claimed","evidence":"observed","supporting_evidence":["response matched"],"contradicting_evidence":[],"acceptance_criteria_met":false}`); !strings.Contains(got,"必须明确满足全部 acceptance_criteria") {
+		t.Fatalf("expected acceptance criteria guard, got %q",got)
+	}
+	if got:=call(`{"intent_id":`+hypothesisFixtureJSONNumber(hypID)+`,"outcome":"confirmed","summary":"criteria met","evidence":"reproducible response","supporting_evidence":["same controlled input produced the expected response"],"contradicting_evidence":[],"acceptance_criteria_met":true}`); !strings.Contains(got,"finding_required") {
+		t.Fatalf("expected confirmed hypothesis result, got %q",got)
+	}
 }
 
 func hypothesisFixtureJSONNumber(id int64) string { b,_:=json.Marshal(id); return string(b) }
