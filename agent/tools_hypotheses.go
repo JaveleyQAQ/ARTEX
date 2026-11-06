@@ -80,14 +80,8 @@ func (t *ToolSet) recordHypothesisResult() actool.CoreTool {
 			}
 			if patternID, ok := hypothesis["pattern_id"]; ok { result["pattern_id"] = patternID }
 			if len(a.Limitations)>0 { result["limitations"] = a.Limitations }
-			factID, err := t.ts.AddNode(db.KindFact, result, 5, "confirmed", t.worker, intentAssetIDs(intent))
-			if err != nil { return actool.Errorf(fmt.Sprintf("保存验证结果失败: %v",err)), nil }
-			if err := t.ts.Link(a.IntentID, db.RelYields, factID); err != nil {
-				return actool.Errorf(fmt.Sprintf("验证结果已保存为 fact %d，但建立血缘失败: %v",factID,err)), nil
-			}
-			if err := t.ts.SetIntentHypothesisLifecycle(a.IntentID, "recorded", a.Outcome, factID); err != nil {
-				return actool.Errorf(fmt.Sprintf("验证结果 fact %d 已保存，但生命周期状态更新失败: %v", factID, err)), nil
-			}
+			factID, err := t.ts.RecordIntentHypothesisResult(a.IntentID, result, t.worker, intentAssetIDs(intent))
+			if err != nil { return actool.Errorf(fmt.Sprintf("保存验证结果失败: %v", err)), nil }
 			t.writes.Facts++
 			return jsonResult(map[string]any{"fact_id":factID,"intent_id":a.IntentID,"outcome":a.Outcome,"finding_required":a.Outcome=="confirmed" && *a.AcceptanceCriteriaMet,"note":"验证结论已保存；confirmed 仍需独立 report_finding，不能仅凭假设或模式匹配报告漏洞。"})
 		})
