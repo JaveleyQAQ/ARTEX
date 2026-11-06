@@ -109,13 +109,34 @@ UPDATE exploration_nodes
 SET payload = payload || jsonb_build_object(
 	'hypothesis_status', 'recorded',
 	'hypothesis_outcome', $1::text,
-	'hypothesis_result_fact_id', $2::bigint
+	'hypothesis_acceptance_criteria_met', $2::boolean,
+	'hypothesis_result_fact_id', $3::bigint
 ), content_version=content_version+1
-WHERE id=$3 AND exploration_id=$4 AND kind='intent'`, result["hypothesis_outcome"], factID, intentID, s.expID); err != nil {
+WHERE id=$4 AND exploration_id=$5 AND kind='intent'`, result["hypothesis_outcome"], result["acceptance_criteria_met"], factID, intentID, s.expID); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return factID, nil
+}
+
+// IntentHypothesisFindingAllowed is the server-side gate for report_finding.
+// Legacy intents without a hypothesis retain their existing behavior.
+func (s *ExplorationStore) IntentHypothesisFindingAllowed(intentID int64) (bool, error) {
+	var hasHypothesis, allowed bool
+	err := s.db.QueryRow(`
+SELECT payload ? 'hypothesis',
+       COALESCE(payload->>'hypothesis_status'='recorded'
+         AND payload->>'hypothesis_outcome'='confirmed'
+         AND (payload->>'hypothesis_acceptance_criteria_met')::boolean, false)
+FROM exploration_nodes
+WHERE id=$1 AND exploration_id=$2 AND kind='intent'`, intentID, s.expID).Scan(&hasHypothesis, &allowed)
+	if err == sql.ErrNoRows {
+		return false, fmt.Errorf("intent %d not found", intentID)
+	}
+	if err != nil {
+		return false, err
+	}
+	return !hasHypothesis || allowed, nil
 }
