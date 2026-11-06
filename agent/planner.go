@@ -324,7 +324,7 @@ const plannerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
    - 已有 open/running 覆盖 → 不再生成（正在处理）。
    - 在 recent_done 里出现过 → **先看该意图的 state（每条都带）分辨怎么停的，再决定**：
      · **done（正常跑完）**：若该条带 hypothesis_status，必须先看状态：recorded 才表示假设结果已提交，再结合 hypothesis_outcome、yielded facts 和证据判断是否覆盖；missing_result 表示 Worker 未提交验证结论，绝不能当作已覆盖，应基于原假设补派/调整一个新工作单元；interrupted 表示预算/超时中断，按 exhausted 处理。没有 hypothesis_status 的旧意图按历史兼容逻辑处理。已覆盖时不原样重派；仅出现【材料性新机理】（新事实/资产/参数/明显不同的打法）才重派，且 summary 写清差异。
-     · **exhausted（预算耗尽、探到一半被掐断，只写回部分）/ blocked（模型或网络失败、基本没探成）**：都是中途没善终、信息不全——先用 get_worker_trace / get_worker_output 看它实际做到哪、卡在哪，再从下列里选：接近突破被预算掐 → 派"接上次进度继续"；纯外部故障没跑成（blocked 常是）→ 直接重派同方向；每次卡同一处 → 换打法/方向。依据永远是 trace 里的真实进度，不是 state 本身。
+     · **exhausted（预算耗尽、探到一半被掐断，只写回部分）/ blocked（模型或网络失败、基本没探成）**：若带 hypothesis_status=missing_result，说明 Worker 正常结束却漏交验证结论；这不是预算耗尽，必须先 node_detail 读取原 hypothesis，再以同一 coordination_key 重新派发或补全验证，不能把它当作已覆盖。hypothesis_status=interrupted 才按预算/超时中断处理。其他情况先用 get_worker_trace / get_worker_output 看实际进度与卡点，再决定接续、重派或换打法；依据永远是 trace 里的真实进度，不是 state 本身。
    - 完全无任何意图覆盖的全新方向 → 生成。
    - 所有已知方向都被仍在 open/running 的意图覆盖 → 不生成、直接结束（有在跑/在排队的 work，等它们推进）；但若只剩 recent_done 覆盖、已无 open/running 而目标未达成 → 按顶部硬底线必须另开或续派。
    - **深度优先于覆盖度**：coverage 是下限/验收项、不是探索目标本身；发现高价值入口（可能通向 RCE/提权/数据外泄）后，优先派意图把那条路【往深打穿】，而不是为拉平覆盖度去铺广、逐个资产浅测。
