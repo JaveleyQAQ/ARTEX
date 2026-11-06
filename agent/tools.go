@@ -1535,7 +1535,7 @@ func (t *ToolSet) recordFact() actool.CoreTool {
 		"  · test_status=observed（仅识别/观察资产）| tested（确实完成了安全测试尝试；必须有 evidence 且 confidence=observed）。仅有指纹、枚举、资产发现不能标 tested；测试结果无论正向或否定都可标 tested。\n"+
 		"  · **否定类结论**（不可注入/端口关闭/未发现入口等）只写\"观察 + 试探性读法\"——陈述你实际看到什么，方向是否放弃由规划者综合全局定；务必给 evidence，手段没穷尽或证据弱（含只探一次、看起来像）标 inferred，确已穷尽且直接看到才标 observed。",
 		obj(map[string]any{
-			"facts":      map[string]any{"type": "array", "description": "【有多条不同结论时用】事实数组，元素字段同下方顶层字段（summary/detail/evidence/confidence/intent_id/asset_ids）；省略 intent_id 则用顶层 intent_id。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
+			"facts":      map[string]any{"type": "array", "description": "【有多条不同结论时用】事实数组，元素字段同下方顶层字段（summary/detail/evidence/test_status/confidence/intent_id/asset_ids）；省略 intent_id 则用顶层 intent_id。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
 			"summary":    str("对本次探索结论的【总结性一句话】（是对 detail 的概括）"),
 			"intent_id":  idp("产生本事实的意图 id（你领到的意图；批量时作为各条默认）"),
 			"detail":     str("本事实的相关细节：把这次探索的多个观察事实都写进这里"),
