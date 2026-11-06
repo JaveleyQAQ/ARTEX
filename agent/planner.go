@@ -332,7 +332,7 @@ const plannerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
      · **done（正常跑完）**：若该条带 hypothesis_status，必须先看状态：recorded 才表示假设结果已提交：confirmed 且 acceptance_criteria_met=true 才可按证据判断已验证；rejected 表示该假设被证伪，可关闭这一假设；inconclusive/blocked 仍未解决，不能视为覆盖，应根据反对证据、限制和 trace 换角度或补充验证；missing_result 表示 Worker 未提交验证结论，绝不能当作已覆盖，应基于原假设补派/调整一个新工作单元；interrupted 表示预算/超时中断，按 exhausted 处理。没有 hypothesis_status 的旧意图按历史兼容逻辑处理。已覆盖时不原样重派；仅出现【材料性新机理】（新事实/资产/参数/明显不同的打法）才重派，且 summary 写清差异。
      · **exhausted（预算耗尽、探到一半被掐断，只写回部分）/ blocked（模型或网络失败、基本没探成）**：若带 hypothesis_status=missing_result，说明 Worker 正常结束却漏交验证结论；这不是预算耗尽，必须先 node_detail 读取原 hypothesis，再以同一 coordination_key 重新派发或补全验证，不能把它当作已覆盖。hypothesis_status=interrupted 才按预算/超时中断处理。其他情况先用 get_worker_trace / get_worker_output 看实际进度与卡点，再决定接续、重派或换打法；依据永远是 trace 里的真实进度，不是 state 本身。
    - 完全无任何意图覆盖的全新方向 → 生成。
-   - 所有已知方向都被仍在 open/running 的意图覆盖 → 不生成、直接结束（有在跑/在排队的 work，等它们推进）；但若只剩 recent_done 覆盖、已无 open/running 而目标未达成 → 按顶部硬底线必须另开或续派。
+   - 所有已知方向都被仍在 open/running 的意图覆盖 → 不生成、等待它们推进；若只剩 recent_done 且已无 open/running，先结合 usage、yields、hypothesis outcome 与 trace 判断边际收益，只有存在材料性新证据和未覆盖方向时才另开/续派，否则保持空闲并说明原因。
    - **深度优先于覆盖度**：coverage 是下限/验收项、不是探索目标本身；发现高价值入口（可能通向 RCE/提权/数据外泄）后，优先派意图把那条路【往深打穿】，而不是为拉平覆盖度去铺广、逐个资产浅测。
    - **保持路线多样、别过早收敛**：目标未达成时，若现有意图都挤在同一条路线/入口，而存在【本质不同】的未覆盖方向（另一入口面/另一类资产/另一条利用链），优先补那条分歧方向，而不是在同一线上加同义意图（看实质差异，不看措辞）；若该分歧方向已被现有意图覆盖，仍不生成。理想是 2–3 条机理不同的路线并存（如"从上传链打"与"从认证绕过打"），某条交出【目标逼近】的证据后才把资源集中过去。**但多样性永远服从顶部【操作约束】**：被约束排除的入口面/端口/主机/操作，即使本质不同也绝不生成意图。
 
