@@ -53,7 +53,7 @@ func TestCoverageSeparatesObservedAssetsFromSecurityTestedAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if coverage.Denominator != 1 || coverage.Tested != 1 || coverage.SecurityTested != 0 {
+	if coverage.Denominator != 1 || coverage.Observed != 1 || coverage.Tested != 1 || coverage.SecurityTested != 0 {
 		t.Fatalf("observation must not count as security-tested: %+v", coverage)
 	}
 
@@ -72,7 +72,7 @@ func TestCoverageSeparatesObservedAssetsFromSecurityTestedAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if coverage.Denominator != 1 || coverage.Tested != 1 || coverage.SecurityTested != 1 {
+	if coverage.Denominator != 1 || coverage.Observed != 1 || coverage.Tested != 1 || coverage.SecurityTested != 1 {
 		t.Fatalf("explicit security test should count once without inflating observed assets: %+v", coverage)
 	}
 	if coverage.SecurityTestedPct == nil || *coverage.SecurityTestedPct != 1 {
@@ -96,6 +96,15 @@ func TestRecordFactCannotClaimTestedWithoutDirectEvidence(t *testing.T) {
 	}, 0)
 	if err == nil {
 		t.Fatal("test_status=tested without evidence must be rejected")
+	}
+	_, err = tools.recordOneFact(factItem{
+		Summary: "inferred test claim",
+		Evidence: "ambiguous response text",
+		TestStatus: "tested",
+		Confidence: "inferred",
+	}, 0)
+	if err == nil {
+		t.Fatal("test_status=tested with inferred confidence must be rejected")
 	}
 }
 
