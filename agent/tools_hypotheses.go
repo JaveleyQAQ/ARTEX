@@ -50,12 +50,6 @@ func (t *ToolSet) recordHypothesisResult() actool.CoreTool {
 			if strings.TrimSpace(a.Summary)=="" || strings.TrimSpace(a.Evidence)=="" {
 				return actool.Errorf("summary 和 evidence 不能为空；只记录真实观察"), nil
 			}
-			if a.Outcome == "confirmed" && !a.AcceptanceCriteriaMet {
-				return actool.Errorf("confirmed 必须明确满足全部 acceptance_criteria；否则应记录 inconclusive 或 rejected"), nil
-			}
-			if a.Outcome != "confirmed" && a.AcceptanceCriteriaMet {
-				return actool.Errorf("只有 outcome=confirmed 才能将 acceptance_criteria_met 设为 true"), nil
-			}
 			intent, err := t.ts.GetNode(a.IntentID)
 			if err != nil || intent == nil || intent.Kind != db.KindIntent {
 				return actool.Errorf("intent_id 必须是本任务的意图节点"), nil
@@ -64,6 +58,12 @@ func (t *ToolSet) recordHypothesisResult() actool.CoreTool {
 			if err := json.Unmarshal(intent.Payload, &payload); err != nil { return actool.Errorf("意图 payload 无效"), nil }
 			hypothesis, ok := payload["hypothesis"].(map[string]any)
 			if !ok || hypothesis == nil { return actool.Errorf("该意图没有结构化 hypothesis，不能记录假设验证结果"), nil }
+			if a.Outcome == "confirmed" && !a.AcceptanceCriteriaMet {
+				return actool.Errorf("confirmed 必须明确满足全部 acceptance_criteria；否则应记录 inconclusive 或 rejected"), nil
+			}
+			if a.Outcome != "confirmed" && a.AcceptanceCriteriaMet {
+				return actool.Errorf("只有 outcome=confirmed 才能将 acceptance_criteria_met 设为 true"), nil
+			}
 			_, lifecycle, _, lifecycleErr := t.ts.IntentHypothesisLifecycle(a.IntentID)
 			if lifecycleErr != nil { return actool.Errorf(fmt.Sprintf("读取假设生命周期失败: %v", lifecycleErr)), nil }
 			if lifecycle == "recorded" { return actool.Errorf("该意图的假设结果已经提交；请勿重复写入"), nil }
