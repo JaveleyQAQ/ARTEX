@@ -17,7 +17,10 @@ func TestRecordFindingDeduplicatesSameTaskRootCauseAndPreservesEvidence(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer d.DeleteTask(task.ID)
+	defer func() {
+		_, _ = d.Exec("DELETE FROM findings WHERE task_id=$1", task.ID)
+		_ = d.DeleteTask(task.ID)
+	}()
 	store := d.Exploration(task.ExplorationID)
 
 	intent1, err := store.AddIntent(map[string]any{"summary": "first verification"}, 5, nil, "planner")
