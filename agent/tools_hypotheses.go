@@ -25,6 +25,7 @@ func (t *ToolSet) recordHypothesisResult() actool.CoreTool {
 			"contradicting_evidence": stringArraySchema("反对假设成立或削弱结论的实际观察；没有则传空数组"),
 			"acceptance_criteria_met": map[string]any{"type":"boolean","description":"只有逐项满足 hypothesis.acceptance_criteria 且证据可复核时才为 true；confirmed 必须为 true"},
 			"limitations": stringArraySchema("验证限制、未覆盖条件或潜在误判原因"),
+			"test_performed": map[string]any{"type":"boolean","description":"可选。是否实际执行了安全测试尝试。confirmed/rejected 默认为 true；inconclusive 默认为 false，若确实执行过测试可显式传 true；blocked 必须为 false。未执行测试不能计入安全测试覆盖率。"},
 		}, "intent_id","outcome","summary","evidence","supporting_evidence","contradicting_evidence","acceptance_criteria_met"),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
@@ -36,6 +37,7 @@ func (t *ToolSet) recordHypothesisResult() actool.CoreTool {
 				ContradictingEvidence []string `json:"contradicting_evidence"`
 				AcceptanceCriteriaMet *bool `json:"acceptance_criteria_met"`
 				Limitations []string `json:"limitations"`
+				TestPerformed *bool `json:"test_performed"`
 			}
 			if err := json.Unmarshal(in, &a); err != nil { return actool.Errorf(err.Error()), nil }
 			a.Outcome = strings.ToLower(strings.TrimSpace(a.Outcome))
@@ -67,6 +69,16 @@ func (t *ToolSet) recordHypothesisResult() actool.CoreTool {
 			if a.Outcome != "confirmed" && *a.AcceptanceCriteriaMet {
 				return actool.Errorf("只有 outcome=confirmed 才能将 acceptance_criteria_met 设为 true"), nil
 			}
+			testPerformed := a.Outcome == "confirmed" || a.Outcome == "rejected"
+			if a.TestPerformed != nil {
+				testPerformed = *a.TestPerformed
+			}
+			if a.Outcome == "blocked" && testPerformed {
+				return actool.Errorf("outcome=blocked 不能标记为已执行安全测试"), nil
+			}
+			if (a.Outcome == "confirmed" || a.Outcome == "rejected") && !testPerformed {
+				return actool.Errorf("confirmed/rejected 必须基于实际执行的安全测试；未执行应记录 inconclusive/blocked"), nil
+			}
 			_, lifecycle, _, lifecycleErr := t.ts.IntentHypothesisLifecycle(a.IntentID)
 			if lifecycleErr != nil { return actool.Errorf(fmt.Sprintf("读取假设生命周期失败: %v", lifecycleErr)), nil }
 			if lifecycle == "recorded" { return actool.Errorf("该意图的假设结果已经提交；请勿重复写入"), nil }
@@ -77,7 +89,7 @@ func (t *ToolSet) recordHypothesisResult() actool.CoreTool {
 				"contradicting_evidence": a.ContradictingEvidence,
 				"acceptance_criteria_met": *a.AcceptanceCriteriaMet,
 				"confidence": "observed",
-				"test_status": map[bool]string{true: "tested", false: "observed"}[a.Outcome != "blocked"],
+				"test_status": map[bool]string{true: "tested", false: "observed"}[testPerformed],
 			}
 			if patternID, ok := hypothesis["pattern_id"]; ok { result["pattern_id"] = patternID }
 			if len(a.Limitations)>0 { result["limitations"] = a.Limitations }
