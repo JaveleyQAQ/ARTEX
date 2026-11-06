@@ -2817,13 +2817,22 @@ func (s *Server) tokenStats(w http.ResponseWriter, r *http.Request) {
 	t := s.m.ResolveTask(r.URL.Query().Get("task"))
 	if t == nil {
 		writeJSON(w, 200, map[string]any{
-			"workers":  []db.TokenUsage{},
-			"sessions": []db.SessionTokenUsage{},
-			"total":    tokenTotalDTO(db.TokenUsage{}),
+			"workers":      []db.TokenUsage{},
+			"sessions":     []db.SessionTokenUsage{},
+			"intent_usage": []db.IntentUsageSummary{},
+			"total":        tokenTotalDTO(db.TokenUsage{}),
 		})
 		return
 	}
 	stats, err := t.Store.TokenStatsByWorker()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	// Exact per-call ledger grouped by intent. Keep legacy activity/result
+	// aggregates for backward compatibility; expose this alongside them so the
+	// UI can distinguish session snapshots from actual provider calls.
+	intentUsage, err := t.Store.LLMUsageByIntent()
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -2838,7 +2847,7 @@ func (s *Server) tokenStats(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"workers": stats, "sessions": sessions, "total": tokenTotalDTO(total)})
+	writeJSON(w, 200, map[string]any{"workers": stats, "sessions": sessions, "intent_usage": intentUsage, "total": tokenTotalDTO(total)})
 }
 
 // tokenDailyStats returns global token consumption aggregated by calendar day

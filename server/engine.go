@@ -1143,6 +1143,24 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		state = "exhausted"
 		log.Printf("[worker %s] intent %d 运行超时(exhausted)，收尾后写回 %s", name, intent.ID, wrote)
 	}
+	// A normal model stop is not sufficient to complete a structured hypothesis.
+	// Require the Worker to persist its evidence-backed outcome before the intent
+	// can enter done; otherwise Planner could mistake an unverified direction as covered.
+	hasHypothesis, hypothesisStatus, _, hypothesisErr := t.Store.IntentHypothesisLifecycle(intent.ID)
+	if hypothesisErr != nil {
+		log.Printf("[worker %s] task %s 意图 #%d 假设生命周期读取失败: %v", name, t.ID, intent.ID, hypothesisErr)
+		if state == "done" {
+			state = "blocked"
+		}
+	} else if hasHypothesis && hypothesisStatus != "recorded" {
+		if state == "done" {
+			state = "exhausted"
+			_ = t.Store.SetIntentHypothesisLifecycle(intent.ID, "missing_result", "", 0)
+			log.Printf("[worker %s] task %s 意图 #%d 缺少假设验证结果，禁止标记 done", name, t.ID, intent.ID)
+		} else if state == "exhausted" {
+			_ = t.Store.SetIntentHypothesisLifecycle(intent.ID, "interrupted", "", 0)
+		}
+	}
 	if state == "blocked" && isTaskLLMChainExhausted(err) {
 		_ = t.Store.SetIntentBlockedReason(intent.ID, db.IntentBlockedLLMQuota)
 	} else {

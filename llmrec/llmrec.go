@@ -18,6 +18,7 @@ import (
 
 type taskIDContextKey struct{}
 type workerContextKey struct{}
+type intentContextKey struct{}
 
 // WithTaskID attaches the owning task registry id to an LLM call. Session ids
 // are based on exploration ids, which are not interchangeable with task ids.
@@ -36,6 +37,18 @@ func TaskIDFrom(ctx context.Context) string {
 	}
 	taskID, _ := ctx.Value(taskIDContextKey{}).(string)
 	return strings.TrimSpace(taskID)
+}
+
+// WithIntentID attaches the claimed exploration intent to every LLM call in a Worker session.
+func WithIntentID(ctx context.Context, intentID int64) context.Context {
+	if intentID <= 0 { return ctx }
+	return context.WithValue(ctx, intentContextKey{}, intentID)
+}
+
+func IntentIDFrom(ctx context.Context) int64 {
+	if ctx == nil { return 0 }
+	intentID, _ := ctx.Value(intentContextKey{}).(int64)
+	return intentID
 }
 
 // WithWorker overrides the agent-lane ("worker") label for an LLM call. The lane
@@ -129,6 +142,7 @@ func (r *Recorder) Stream(ctx context.Context, req llm.CompletionRequest) iter.S
 	}
 	expID := db.ParseExpID(parsedID)
 	taskID := TaskIDFrom(ctx)
+	intentID := IntentIDFrom(ctx)
 	if taskID == "" {
 		// Backward compatibility for non-task callers. For task calls, the task
 		// runtime always supplies the registry id explicitly.
@@ -167,7 +181,7 @@ func (r *Recorder) Stream(ctx context.Context, req llm.CompletionRequest) iter.S
 				status = "error"
 			}
 			// Lightweight metering row — always written.
-			r.recordUsage(taskID, expID, worker, usage, int(time.Since(start).Milliseconds()), status)
+			r.recordUsage(taskID, expID, worker, intentID, usage, int(time.Since(start).Milliseconds()), status)
 			// Heavy trace row — only when body recording is on.
 			if recordBodies {
 				r.record(req, session, taskID, worker, reqBody, capt, start, textBuf.String(), thinkingBuf.String(), usage, stopReason, err)
@@ -229,6 +243,7 @@ func (r *Recorder) Complete(ctx context.Context, req llm.CompletionRequest) (llm
 	}
 	expID := db.ParseExpID(parsedID)
 	taskID := TaskIDFrom(ctx)
+	intentID := IntentIDFrom(ctx)
 	if taskID == "" {
 		taskID = parsedID
 	}
@@ -245,7 +260,7 @@ func (r *Recorder) Complete(ctx context.Context, req llm.CompletionRequest) (llm
 	if err != nil {
 		status = "error"
 	}
-	r.recordUsage(taskID, expID, worker, usage, int(time.Since(start).Milliseconds()), status)
+	r.recordUsage(taskID, expID, worker, intentID, usage, int(time.Since(start).Milliseconds()), status)
 	if recordBodies {
 		r.record(req, session, taskID, worker, reqBody, capt, start, msg.Text(), thinkingText(msg), usage, stopReason, err)
 	}
@@ -264,7 +279,7 @@ func thinkingText(msg llm.Message) string {
 
 // recordUsage appends one lightweight metering row to llm_usage (no bodies). Skips
 // zero-token calls with no model, which carry nothing worth metering.
-func (r *Recorder) recordUsage(taskID string, expID int64, worker string, usage llm.Usage, latencyMs int, status string) {
+func (r *Recorder) recordUsage(taskID string, expID int64, worker string, intentID int64, usage llm.Usage, latencyMs int, status string) {
 	if r.pg == nil {
 		return
 	}
@@ -276,6 +291,7 @@ func (r *Recorder) recordUsage(taskID string, expID int64, worker string, usage 
 		TaskID:        taskID,
 		ExplorationID: expID,
 		Worker:        worker,
+		IntentID:      intentID,
 		Model:         r.model,
 		ProfileName:   r.prof,
 		LatencyMs:     latencyMs,

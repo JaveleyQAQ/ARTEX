@@ -266,22 +266,27 @@ type CoverageAsset struct {
 	Label string `json:"label"`
 }
 
-// CoverageByType is per-asset-type coverage: total in scope vs tested.
+// CoverageByType separates fact observation from explicit security-test attempts per asset type.
 type CoverageByType struct {
-	Type   string `json:"type"`
-	Total  int    `json:"total"`
-	Tested int    `json:"tested"`
+	Type           string `json:"type"`
+	Total          int    `json:"total"`
+	Observed       int    `json:"observed"`
+	Tested         int    `json:"tested"` // legacy alias: any fact observed on this asset
+	SecurityTested int    `json:"security_tested"` // explicit evidence-backed security test attempt
 }
 
-// Coverage is a task's rough asset test coverage — a reference figure for the agent,
-// NOT a precise metric. Denominator = assets matching any active task_scope row;
-// Tested = those anchored to at least one fact node in the exploration.
+// Coverage is a task's rough asset observation and security-test coverage — reference figures,
+// NOT precise metrics. Denominator = assets matching task_scope; Tested is the legacy
+// fact-observation count, while SecurityTested requires an explicit evidence-backed test_status.
 type Coverage struct {
 	Enabled     bool             `json:"enabled"`     // 资产覆盖度功能是否开启；false 时其余字段为零值
 	ScopeRows   int              `json:"scope_rows"`  // 0 → 范围未锚定
 	Denominator int              `json:"denominator"` // 范围内资产数
-	Tested      int              `json:"tested"`      // 已测(约)
-	Pct         *float64         `json:"pct"`         // 覆盖度；分母 0 时 null
+	Observed    int              `json:"observed"`
+	Tested            int              `json:"tested"` // legacy alias: assets with any fact observation
+	SecurityTested    int              `json:"security_tested"` // assets with explicit evidence-backed security test attempts
+	Pct               *float64         `json:"pct"` // legacy observed-asset ratio
+	SecurityTestedPct *float64         `json:"security_tested_pct"`         // 覆盖度；分母 0 时 null
 	ByType      []CoverageByType `json:"by_type"`     // 按资产类型的 总数/已测
 }
 
@@ -321,6 +326,14 @@ tested AS (
   FROM exploration_anchors ea
   JOIN exploration_nodes en ON en.id = ea.node_id
   WHERE en.exploration_id = $2 AND en.kind = 'fact'
+),
+security_tested AS (
+  SELECT DISTINCT ea.asset_id
+  FROM exploration_anchors ea
+  JOIN exploration_nodes en ON en.id = ea.node_id
+  WHERE en.exploration_id = $2 AND en.kind = 'fact'
+    AND en.payload->>'test_status' = 'tested'
+    AND COALESCE(en.payload->>'evidence', '') <> ''
 )`
 
 // TaskCoverage computes rough per-type coverage for a task. taskID indexes
@@ -330,7 +343,8 @@ func (s *AssetStore) TaskCoverage(taskID, expID int64) (*Coverage, error) {
 	_ = s.db.QueryRow(`SELECT count(*) FROM task_scope WHERE task_id=$1`, taskID).Scan(&cov.ScopeRows)
 	rows, err := s.db.Query(`WITH `+covTargetCTE+`
 SELECT t.type, count(*) AS total,
-       count(*) FILTER (WHERE t.id IN (SELECT asset_id FROM tested)) AS tested
+       count(*) FILTER (WHERE t.id IN (SELECT asset_id FROM tested)) AS tested,
+       count(*) FILTER (WHERE t.id IN (SELECT asset_id FROM security_tested)) AS security_tested
 FROM target t GROUP BY t.type ORDER BY t.type`, taskID, expID)
 	if err != nil {
 		return nil, err
@@ -338,12 +352,15 @@ FROM target t GROUP BY t.type ORDER BY t.type`, taskID, expID)
 	defer rows.Close()
 	for rows.Next() {
 		var bt CoverageByType
-		if err := rows.Scan(&bt.Type, &bt.Total, &bt.Tested); err != nil {
+		if err := rows.Scan(&bt.Type, &bt.Total, &bt.Tested, &bt.SecurityTested); err != nil {
 			return nil, err
 		}
+		bt.Observed = bt.Tested
 		cov.ByType = append(cov.ByType, bt)
 		cov.Denominator += bt.Total
+		cov.Observed += bt.Observed
 		cov.Tested += bt.Tested
+		cov.SecurityTested += bt.SecurityTested
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -351,6 +368,8 @@ FROM target t GROUP BY t.type ORDER BY t.type`, taskID, expID)
 	if cov.Denominator > 0 {
 		p := float64(cov.Tested) / float64(cov.Denominator)
 		cov.Pct = &p
+		securityPct := float64(cov.SecurityTested) / float64(cov.Denominator)
+		cov.SecurityTestedPct = &securityPct
 	}
 	return cov, nil
 }
@@ -368,7 +387,8 @@ type CoverageGraphNode struct {
 	Key         string `json:"key"`
 	Kind        string `json:"kind"` // company|root_domain|subdomain|ip|service|app|endpoint
 	Label       string `json:"label"`
-	Tested      bool   `json:"tested"`
+	Tested         bool   `json:"tested"` // any Fact observation
+	SecurityTested bool   `json:"security_tested"` // explicit evidence-backed security test
 	InScope     bool   `json:"in_scope"`
 	AssetID     int64  `json:"asset_id,omitempty"` // 0 for company / synthetic root
 	CompanyID   int64  `json:"company_id,omitempty"`
@@ -430,7 +450,8 @@ SELECT a.id, a.type, COALESCE(a.company_id,0),
        COALESCE(a.domain,''), COALESCE(a.root_domain,''), COALESCE(a.ip,''),
        COALESCE(a.url,''), COALESCE(a.port,0), COALESCE(a.service_type,''),
        COALESCE(a.app_name,''), COALESCE(a.page_title,''), COALESCE(a.status_code,0),
-       (a.id IN (SELECT asset_id FROM tested)) AS tested
+       (a.id IN (SELECT asset_id FROM tested)) AS tested,
+       (a.id IN (SELECT asset_id FROM security_tested)) AS security_tested
 FROM assets a JOIN target t ON t.id = a.id
 ORDER BY a.id`, taskID)
 	if err != nil {
@@ -461,7 +482,7 @@ ORDER BY a.id`, taskID)
 		var companyID int64
 		if err := rows.Scan(&n.AssetID, &n.Kind, &companyID,
 			&n.Domain, &n.RootDomain, &n.IP, &n.URL, &n.Port, &n.ServiceType,
-			&n.AppName, &n.PageTitle, &n.StatusCode, &n.Tested); err != nil {
+			&n.AppName, &n.PageTitle, &n.StatusCode, &n.Tested, &n.SecurityTested); err != nil {
 			return nil, err
 		}
 		n.Key = assetKey(n.AssetID)

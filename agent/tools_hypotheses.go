@@ -20,16 +20,24 @@ func (t *ToolSet) recordHypothesisResult() actool.CoreTool {
 			"intent_id": idp("当前 Worker 领取的意图 ID"),
 			"outcome": map[string]any{"type":"string","enum":[]string{"confirmed","rejected","inconclusive","blocked"},"description":"验证结论"},
 			"summary": str("本轮验证的简明结论"),
-			"evidence": str("实际观察到的关键证据，包含请求/命令与关键响应；不得编造"),
+			"evidence": str("对本轮验证的简明证据摘要，必须真实、可复核"),
+			"supporting_evidence": stringArraySchema("支持假设成立的实际观察；没有则传空数组"),
+			"contradicting_evidence": stringArraySchema("反对假设成立或削弱结论的实际观察；没有则传空数组"),
+			"acceptance_criteria_met": map[string]any{"type":"boolean","description":"只有逐项满足 hypothesis.acceptance_criteria 且证据可复核时才为 true；confirmed 必须为 true"},
 			"limitations": stringArraySchema("验证限制、未覆盖条件或潜在误判原因"),
-		}, "intent_id","outcome","summary","evidence"),
+			"test_performed": map[string]any{"type":"boolean","description":"可选。是否实际执行了安全测试尝试。confirmed/rejected 默认为 true；inconclusive 默认为 false，若确实执行过测试可显式传 true；blocked 必须为 false。未执行测试不能计入安全测试覆盖率。"},
+		}, "intent_id","outcome","summary","evidence","supporting_evidence","contradicting_evidence","acceptance_criteria_met"),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
 				IntentID int64 `json:"intent_id"`
 				Outcome string `json:"outcome"`
 				Summary string `json:"summary"`
 				Evidence string `json:"evidence"`
+				SupportingEvidence []string `json:"supporting_evidence"`
+				ContradictingEvidence []string `json:"contradicting_evidence"`
+				AcceptanceCriteriaMet *bool `json:"acceptance_criteria_met"`
 				Limitations []string `json:"limitations"`
+				TestPerformed *bool `json:"test_performed"`
 			}
 			if err := json.Unmarshal(in, &a); err != nil { return actool.Errorf(err.Error()), nil }
 			a.Outcome = strings.ToLower(strings.TrimSpace(a.Outcome))
@@ -52,19 +60,42 @@ func (t *ToolSet) recordHypothesisResult() actool.CoreTool {
 			if err := json.Unmarshal(intent.Payload, &payload); err != nil { return actool.Errorf("意图 payload 无效"), nil }
 			hypothesis, ok := payload["hypothesis"].(map[string]any)
 			if !ok || hypothesis == nil { return actool.Errorf("该意图没有结构化 hypothesis，不能记录假设验证结果"), nil }
+			if a.SupportingEvidence == nil || a.ContradictingEvidence == nil || a.AcceptanceCriteriaMet == nil {
+				return actool.Errorf("必须明确提交 supporting_evidence、contradicting_evidence（无则空数组）和 acceptance_criteria_met"), nil
+			}
+			if a.Outcome == "confirmed" && !*a.AcceptanceCriteriaMet {
+				return actool.Errorf("confirmed 必须明确满足全部 acceptance_criteria；否则应记录 inconclusive 或 rejected"), nil
+			}
+			if a.Outcome != "confirmed" && *a.AcceptanceCriteriaMet {
+				return actool.Errorf("只有 outcome=confirmed 才能将 acceptance_criteria_met 设为 true"), nil
+			}
+			testPerformed := a.Outcome == "confirmed" || a.Outcome == "rejected"
+			if a.TestPerformed != nil {
+				testPerformed = *a.TestPerformed
+			}
+			if a.Outcome == "blocked" && testPerformed {
+				return actool.Errorf("outcome=blocked 不能标记为已执行安全测试"), nil
+			}
+			if (a.Outcome == "confirmed" || a.Outcome == "rejected") && !testPerformed {
+				return actool.Errorf("confirmed/rejected 必须基于实际执行的安全测试；未执行应记录 inconclusive/blocked"), nil
+			}
+			_, lifecycle, _, lifecycleErr := t.ts.IntentHypothesisLifecycle(a.IntentID)
+			if lifecycleErr != nil { return actool.Errorf(fmt.Sprintf("读取假设生命周期失败: %v", lifecycleErr)), nil }
+			if lifecycle == "recorded" { return actool.Errorf("该意图的假设结果已经提交；请勿重复写入"), nil }
 			result := map[string]any{
 				"summary": a.Summary, "hypothesis_outcome": a.Outcome,
 				"evidence": a.Evidence, "hypothesis_intent_id": a.IntentID,
+				"supporting_evidence": a.SupportingEvidence,
+				"contradicting_evidence": a.ContradictingEvidence,
+				"acceptance_criteria_met": *a.AcceptanceCriteriaMet,
 				"confidence": "observed",
+				"test_status": map[bool]string{true: "tested", false: "observed"}[testPerformed],
 			}
 			if patternID, ok := hypothesis["pattern_id"]; ok { result["pattern_id"] = patternID }
 			if len(a.Limitations)>0 { result["limitations"] = a.Limitations }
-			factID, err := t.ts.AddNode(db.KindFact, result, 5, "confirmed", t.worker, intentAssetIDs(intent))
-			if err != nil { return actool.Errorf(fmt.Sprintf("保存验证结果失败: %v",err)), nil }
-			if err := t.ts.Link(a.IntentID, db.RelYields, factID); err != nil {
-				return actool.Errorf(fmt.Sprintf("验证结果已保存为 fact %d，但建立血缘失败: %v",factID,err)), nil
-			}
+			factID, err := t.ts.RecordIntentHypothesisResult(a.IntentID, result, t.worker, intentAssetIDs(intent))
+			if err != nil { return actool.Errorf(fmt.Sprintf("保存验证结果失败: %v", err)), nil }
 			t.writes.Facts++
-			return jsonResult(map[string]any{"fact_id":factID,"intent_id":a.IntentID,"outcome":a.Outcome,"finding_required":a.Outcome=="confirmed","note":"验证结论已保存；confirmed 仍需独立 report_finding，不能仅凭假设或模式匹配报告漏洞。"})
+			return jsonResult(map[string]any{"fact_id":factID,"intent_id":a.IntentID,"outcome":a.Outcome,"finding_required":a.Outcome=="confirmed" && *a.AcceptanceCriteriaMet,"note":"验证结论已保存；confirmed 仍需独立 report_finding，不能仅凭假设或模式匹配报告漏洞。"})
 		})
 }

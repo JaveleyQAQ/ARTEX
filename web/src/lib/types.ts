@@ -290,7 +290,8 @@ export interface CoverageGraphNode {
   key: string;
   kind: "company" | "root_domain" | "subdomain" | "ip" | "service" | "app" | "endpoint";
   label: string;
-  tested: boolean;
+  tested: boolean; // at least one fact observation
+  security_tested: boolean; // explicit evidence-backed security test attempt
   in_scope: boolean;
   asset_id?: number;
   company_id?: number;

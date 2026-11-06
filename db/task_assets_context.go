@@ -50,6 +50,14 @@ tested AS (
   FROM exploration_anchors ea
   JOIN exploration_nodes en ON en.id=ea.node_id AND en.kind='fact'
   JOIN context_tasks ctx ON ctx.exploration_id=en.exploration_id
+),
+security_tested AS (
+  SELECT DISTINCT ea.asset_id
+  FROM exploration_anchors ea
+  JOIN exploration_nodes en ON en.id=ea.node_id AND en.kind='fact'
+  JOIN context_tasks ctx ON ctx.exploration_id=en.exploration_id
+  WHERE en.payload->>'test_status'='tested'
+    AND COALESCE(en.payload->>'evidence','') <> ''
 )`
 
 // scopeTargetCTE selects every asset that BELONGS to the current task's (and its
@@ -126,7 +134,8 @@ func (s *AssetStore) TaskCoverageWithSources(taskID int64) (*Coverage, error) {
 SELECT count(*) FROM task_scope ts JOIN context_tasks ctx ON ctx.task_id=ts.task_id`, taskID).Scan(&cov.ScopeRows)
 	rows, err := s.db.Query(`WITH `+contextCoverageCTE+`
 SELECT target.type, count(*) AS total,
-       count(*) FILTER (WHERE target.id IN (SELECT asset_id FROM tested)) AS tested
+       count(*) FILTER (WHERE target.id IN (SELECT asset_id FROM tested)) AS tested,
+       count(*) FILTER (WHERE target.id IN (SELECT asset_id FROM security_tested)) AS security_tested
 FROM target GROUP BY target.type ORDER BY target.type`, taskID)
 	if err != nil {
 		return nil, err
@@ -134,12 +143,15 @@ FROM target GROUP BY target.type ORDER BY target.type`, taskID)
 	defer rows.Close()
 	for rows.Next() {
 		var byType CoverageByType
-		if err := rows.Scan(&byType.Type, &byType.Total, &byType.Tested); err != nil {
+		if err := rows.Scan(&byType.Type, &byType.Total, &byType.Tested, &byType.SecurityTested); err != nil {
 			return nil, err
 		}
+		byType.Observed = byType.Tested
 		cov.ByType = append(cov.ByType, byType)
 		cov.Denominator += byType.Total
+		cov.Observed += byType.Observed
 		cov.Tested += byType.Tested
+		cov.SecurityTested += byType.SecurityTested
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -147,6 +159,8 @@ FROM target GROUP BY target.type ORDER BY target.type`, taskID)
 	if cov.Denominator > 0 {
 		pct := float64(cov.Tested) / float64(cov.Denominator)
 		cov.Pct = &pct
+		securityPct := float64(cov.SecurityTested) / float64(cov.Denominator)
+		cov.SecurityTestedPct = &securityPct
 	}
 	return cov, nil
 }

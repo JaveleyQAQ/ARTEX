@@ -23,6 +23,9 @@ func compactIntents(ns []*db.Node, parentsOf, yieldsOf map[int64][]int64) []map[
 		var p map[string]any
 		_ = json.Unmarshal(n.Payload, &p)
 		m := map[string]any{"id": n.ID, "summary": p["summary"], "state": n.State}
+		if label, ok := p["coordination_label"].(string); ok && label != "" {
+			m["coordination_key"] = label
+		}
 		if n.Inherited {
 			m["source_task_id"] = n.SourceTaskID
 			m["inherited"] = true
@@ -408,9 +411,34 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 		hotAtRender = cg.hotSet()
 	}
 	hidden := func(id int64) bool { _, c := covered[id]; return c && !hotAtRender[id] }
+	// Exact per-call spend is attached to each intent so the Planner can weigh
+	// marginal progress against real provider cost. Missing rows mean zero spend.
+	usageRows, usageErr := t.ts.LLMUsageByIntent()
+	if usageErr != nil {
+		out["intent_usage_error"] = usageErr.Error()
+	}
+	usageByIntent := make(map[int64]db.IntentUsageSummary, len(usageRows))
+	for _, usage := range usageRows {
+		usageByIntent[usage.IntentID] = usage
+	}
+	attachUsage := func(items []map[string]any) {
+		for _, item := range items {
+			id, ok := item["id"].(int64)
+			if !ok { continue }
+			if usage, exists := usageByIntent[id]; exists {
+				item["usage"] = map[string]any{
+					"calls": usage.Calls, "input_tokens": usage.InputTokens,
+					"output_tokens": usage.OutputTokens, "cache_read_tokens": usage.CacheReadTokens,
+					"cache_write_tokens": usage.CacheWriteTokens, "latency_ms": usage.LatencyMs,
+				}
+			}
+		}
+	}
 	const openIntentsCap = 30
 	fr, _ := t.ts.Frontier(openIntentsCap) // priority DESC, id ASC —— 优先级最高的前 N 条；真实总数见 frontier_open
-	out["open_intents"] = compactIntents(fr, parentsOf, yieldsOf)
+	openItems := compactIntents(fr, parentsOf, yieldsOf)
+	attachUsage(openItems)
+	out["open_intents"] = openItems
 	all, _ := t.ts.ListByKind(db.KindIntent, 300)
 	var running, recentDone []*db.Node
 	for _, n := range all {
@@ -424,7 +452,9 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 			recentDone = append(recentDone, n) // 最新在前（all 按 id 降序）；折叠的已剔除，输出时截最新 N
 		}
 	}
-	out["running_intents"] = compactIntents(running, parentsOf, yieldsOf)
+	runningItems := compactIntents(running, parentsOf, yieldsOf)
+	attachUsage(runningItems)
+	out["running_intents"] = runningItems
 	// done_intents_total：已结束意图（done/blocked/exhausted）总数，与 recent_done_intents
 	// 平行命名——后者只是它的最新窗口截断视图。两键并排即自描述："看到的是 N/总数"，
 	// 让 planner 去重时别把"没显示"当成"没派过"，无需在提示词里另行解释。
@@ -458,6 +488,9 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 		var fp map[string]any
 		_ = json.Unmarshal(n.Payload, &fp)
 		m := map[string]any{"id": n.ID, "summary": fp["summary"]}
+		if rootCauseKey, ok := fp["root_cause_key"].(string); ok && rootCauseKey != "" {
+			m["root_cause_key"] = rootCauseKey
+		}
 		if from := factFrom[n.ID]; from > 0 {
 			m["from_intent"] = from // 本漏洞由哪个意图产生
 		}
@@ -497,7 +530,31 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 	if len(recentDone) > recentDoneCap {
 		recentDone = recentDone[:recentDoneCap]
 	}
-	out["recent_done_intents"] = compactIntents(recentDone, parentsOf, yieldsOf)
+	recentDoneSummary := compactIntents(recentDone, parentsOf, yieldsOf)
+	for i, intent := range recentDone {
+		var payload map[string]any
+		if json.Unmarshal(intent.Payload, &payload) != nil || payload["hypothesis"] == nil {
+			continue
+		}
+		status, _ := payload["hypothesis_status"].(string)
+		if status == "" {
+			status = "pending"
+		}
+		recentDoneSummary[i]["hypothesis_status"] = status
+		if outcome, ok := payload["hypothesis_outcome"].(string); ok && outcome != "" {
+			recentDoneSummary[i]["hypothesis_outcome"] = outcome
+		}
+	}
+	for _, item := range recentDoneSummary {
+		if usage, exists := usageByIntent[item["id"].(int64)]; exists {
+			item["usage"] = map[string]any{
+				"calls": usage.Calls, "input_tokens": usage.InputTokens,
+				"output_tokens": usage.OutputTokens, "cache_read_tokens": usage.CacheReadTokens,
+				"cache_write_tokens": usage.CacheWriteTokens, "latency_ms": usage.LatencyMs,
+			}
+		}
+	}
+	out["recent_done_intents"] = recentDoneSummary
 	// cold-digest §6.1: 折叠冷区的 digest body，按最新成员时间降序取前 N；被截的更旧 digest
 	// 只给裸 id（仍可 expand_digest 展开），避免冷区唯一出口被无限拉长。
 	const coldDigestsCap = 15
@@ -516,10 +573,9 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 	// summaries in a separate field so their intents never enter this task's
 	// frontier or get mistaken for locally claimable work.
 	out["related_tasks"] = t.relatedTaskOverviews()
-	// coverage：粗略的资产测试覆盖度参考——范围(task_scope)内的资产里，被 fact 碰过的
-	// 占比 + by_type(按类型的 总数/已测)。要看未测的具体资产由 agent 按需调 list_untested_assets 自行判断。仅任务上下文有。
+	// coverage：区分资产观察比例（被 Fact 关联）与安全测试比例（显式 test_status=tested 且有证据）；均为粗略参考。具体未观察资产由 agent 按需调 list_untested_assets。仅任务上下文有。
 	// 资产覆盖度功能关闭时(coverageDisabled)：只保留 host_count(目标主机数的感知信息)，
-	// 丢弃 denominator/tested/pct/by_type/note 等覆盖度度量，避免污染上下文、也不诱导
+	// 丢弃 denominator/observed/security_tested/pct/by_type/note 等覆盖度度量，避免污染上下文、也不诱导
 	// 已隐藏的 add_task_scope/list_untested_assets。
 	if t.as != nil && t.ts != nil && t.taskID > 0 {
 		{
@@ -527,9 +583,13 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 			if !t.coverageDisabled {
 				if cov, err := t.as.TaskCoverageWithSources(t.taskID); err == nil {
 					m["denominator"] = cov.Denominator
-					m["tested"] = cov.Tested
+					m["observed"] = cov.Observed
+					m["tested"] = cov.Tested // backward-compatible alias for observed
+					m["observed_pct"] = cov.Pct
+					m["security_tested"] = cov.SecurityTested
+					m["security_tested_pct"] = cov.SecurityTestedPct
 					m["by_type"] = cov.ByType
-					m["note"] = "coverage资产测试覆盖度（包括接口等各种相关资产），粗略估计、仅供参考：包含当前任务与直接关联任务的 scope、事实锚点；关联 scope 只读。容器型资产/大量枚举会让它偏低，勿据此认为已测完；可用 add_task_scope 增补本任务范围、list_untested_assets 看未测资产【通常不调用list_untested_assets，按照任务推进即可】；"
+					m["note"] = "observed=至少有一条 Fact 关联该资产；tested 为兼容旧字段，仍等于 observed；security_tested=Worker 明确记录完成了有直接证据的安全测试尝试（不代表发现漏洞）。仅指纹/枚举/资产发现不会增加 security_tested。历史 Fact 未显式标记 test_status 时只计入 observed。范围包含当前任务及直接关联任务；关联 scope 只读。list_untested_assets 仍按是否有 Fact 观察筛选。"
 					if cov.Denominator == 0 {
 						m["pct"] = nil
 						m["status"] = "范围未锚定"
@@ -1070,30 +1130,31 @@ type hypothesisSpec struct {
 }
 
 type intentItem struct {
-	Summary    string            `json:"summary"`
-	AssetIDs   []json.RawMessage `json:"asset_ids"`
-	ParentIDs  []json.RawMessage `json:"parent_ids"`
-	Priority   int               `json:"priority"`
-	Hypothesis *hypothesisSpec   `json:"hypothesis,omitempty"`
+	Summary         string            `json:"summary"`
+	CoordinationKey string            `json:"coordination_key,omitempty"`
+	AssetIDs        []json.RawMessage `json:"asset_ids"`
+	ParentIDs       []json.RawMessage `json:"parent_ids"`
+	Priority        int               `json:"priority"`
+	Hypothesis      *hypothesisSpec   `json:"hypothesis,omitempty"`
 }
 
 // addOneIntent 创建一条意图节点并连上游血缘，返回 id。
 // 约束：意图只能锚在已确认知识上——每个 parent_id 必须是已存在的 fact/finding
 // 节点（不能挂在别的意图/目标/提示上）。顶层全新方向留空 parent_ids，兜底连 origin fact。
 // 这样"每个意图都连到 fact 节点、且是发现驱动而非凭空规划"从创建路径上被强制。
-func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
+func (t *ToolSet) addOneIntent(it intentItem) (int64, bool, error) {
 	if strings.TrimSpace(it.Summary) == "" {
-		return 0, fmt.Errorf("summary 不能为空")
+		return 0, false, fmt.Errorf("summary 不能为空")
 	}
 	// 先校验锚点（建节点前，避免坏锚点留下孤儿意图）。
 	parents := pidList(it.ParentIDs)
 	for _, pidv := range parents {
 		n, err := t.ts.GetNodeWithSources(pidv)
 		if err != nil || n == nil {
-			return 0, fmt.Errorf("parent_id %d 不存在于本任务或直接关联任务：parent_ids 必须是已存在的【事实(fact)/发现(finding)】节点 id；顶层全新方向请留空 parent_ids", pidv)
+			return 0, false, fmt.Errorf("parent_id %d 不存在于本任务或直接关联任务：parent_ids 必须是已存在的【事实(fact)/发现(finding)】节点 id；顶层全新方向请留空 parent_ids", pidv)
 		}
 		if n.Kind != db.KindFact && n.Kind != db.KindFinding {
-			return 0, fmt.Errorf("parent_id %d 是 %q 节点，不能作为意图锚点：意图只能锚在已确认的【事实(fact)/发现(finding)】上，不能挂在意图/目标/提示上；顶层全新方向请留空 parent_ids", pidv, n.Kind)
+			return 0, false, fmt.Errorf("parent_id %d 是 %q 节点，不能作为意图锚点：意图只能锚在已确认的【事实(fact)/发现(finding)】上，不能挂在意图/目标/提示上；顶层全新方向请留空 parent_ids", pidv, n.Kind)
 		}
 	}
 	priority := it.Priority
@@ -1105,7 +1166,7 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 	if t.as != nil && len(anchors) > 0 {
 		hits, err := t.as.CheckAssetsIntercept(t.taskID, anchors)
 		if err != nil {
-			return 0, fmt.Errorf("资产拦截校验失败：%w", err)
+			return 0, false, fmt.Errorf("资产拦截校验失败：%w", err)
 		}
 		if len(hits) > 0 {
 			var b strings.Builder
@@ -1113,7 +1174,7 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 			for _, h := range hits {
 				fmt.Fprintf(&b, "\n - %s", h.Describe())
 			}
-			return 0, fmt.Errorf("%s", b.String())
+			return 0, false, fmt.Errorf("%s", b.String())
 		}
 	}
 	payload := map[string]any{"summary": it.Summary}
@@ -1122,33 +1183,39 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 	}
 	if it.Hypothesis != nil {
 		h := *it.Hypothesis
-		if len(h.VerificationSteps) == 0 || len(h.ExpectedEvidence) == 0 {
-			return 0, fmt.Errorf("漏洞假设必须包含 verification_steps 和 expected_evidence")
+		if len(h.VerificationSteps) == 0 || len(h.ExpectedEvidence) == 0 || len(h.AcceptanceCriteria) == 0 {
+			return 0, false, fmt.Errorf("漏洞假设必须包含 verification_steps、expected_evidence 和 acceptance_criteria")
 		}
 		if h.PatternID < 0 {
-			return 0, fmt.Errorf("pattern_id 不能为负数")
+			return 0, false, fmt.Errorf("pattern_id 不能为负数")
 		}
 		if h.PatternID > 0 {
 			pattern, err := t.ts.GetVulnerabilityPattern(h.PatternID)
 			if err != nil || pattern == nil {
-				return 0, fmt.Errorf("漏洞假设引用的 pattern_id %d 不存在", h.PatternID)
+				return 0, false, fmt.Errorf("漏洞假设引用的 pattern_id %d 不存在", h.PatternID)
 			}
 			if pattern.Status != db.PatternReviewed && pattern.Status != db.PatternVerified {
-				return 0, fmt.Errorf("漏洞假设只能引用 reviewed/verified 模式，pattern %d 当前状态为 %s", h.PatternID, pattern.Status)
+				return 0, false, fmt.Errorf("漏洞假设只能引用 reviewed/verified 模式，pattern %d 当前状态为 %s", h.PatternID, pattern.Status)
 			}
 			if h.PatternKey != "" && h.PatternKey != pattern.PatternKey {
-				return 0, fmt.Errorf("pattern_key 与 pattern_id 不匹配")
+				return 0, false, fmt.Errorf("pattern_key 与 pattern_id 不匹配")
 			}
 			h.PatternKey = pattern.PatternKey
 		}
 		if len(anchors) == 0 && strings.TrimSpace(h.AssetRef) == "" {
-			return 0, fmt.Errorf("漏洞假设必须绑定 asset_ids 或 asset_ref")
+			return 0, false, fmt.Errorf("漏洞假设必须绑定 asset_ids 或 asset_ref")
 		}
 		payload["hypothesis"] = h
 	}
-	id, err := t.ts.AddIntent(payload, priority, anchors, "planner")
+	coordinationLabel := intentCoordinationLabel(it)
+	if strings.TrimSpace(it.CoordinationKey) != "" && len([]rune(coordinationLabel)) > 160 {
+		return 0, false, fmt.Errorf("coordination_key 不能超过 160 个字符")
+	}
+	coordinationKey := intentCoordinationKey(it, anchors)
+	payload["coordination_label"] = coordinationLabel
+	id, created, err := t.ts.AddIntentCoordinated(payload, priority, anchors, "planner", coordinationKey)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	// upstream lineage: link each (validated) fact/finding parent → this intent, so
 	// "multiple facts combine into one new intent" is expressible.
@@ -1163,15 +1230,16 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 			_ = t.ts.Link(origin, db.RelDerivedFrom, id)
 		}
 	}
-	return id, nil
+	return id, created, nil
 }
 
 func (t *ToolSet) addIntent() actool.CoreTool {
-	return t.writeExpTool("add_intent", "生成【探索方向】写入 frontier，并连入探索链路。对已检索到 reviewed/verified 漏洞模式、或由明确资产观察触发的漏洞测试方向，必须尽量提供结构化 hypothesis：前置条件、触发指标、逐项非破坏性验证步骤、预期证据、不确定性和验收标准；同时绑定 asset_ids。没有足够依据时不要伪造假设，可创建普通侦察意图。\n"+
+	return t.writeExpTool("add_intent", "生成【探索方向】写入 frontier，并连入探索链路。对已检索到 reviewed/verified 漏洞模式、或由明确资产观察触发的漏洞测试方向，必须尽量提供结构化 hypothesis：前置条件、触发指标、逐项非破坏性验证步骤、预期证据、不确定性和验收标准；同时绑定 asset_ids。没有足够依据时不要伪造假设，可创建普通侦察意图。每条意图必须提供稳定 coordination_key；同一资产集合、同一调查目标/根因复用同一键，不同技术路线使用不同键。数据库会原子去重 active 意图。\n"+
 		"★优先批量：一轮筛出的多个新方向放进 intents 数组一次提交（比逐条调用省往返）。返回 ids 数组，与 intents 等长同序（失败项 id=0，详情见 errors）。单条则省略 intents 直接给顶层 summary。",
 		obj(map[string]any{
-			"intents":    map[string]any{"type": "array", "description": "【优先用这个】要新增的探索方向数组，按顺序处理。每个元素字段同下方顶层字段（summary/asset_ids/parent_ids/priority）。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
+			"intents":    map[string]any{"type": "array", "description": "【优先用这个】要新增的探索方向数组，按顺序处理。每个元素字段同下方顶层字段（summary/coordination_key/asset_ids/parent_ids/priority）。返回 ids 与本数组等长、同序；复用已有活动意图时会在 deduplicated 中标记。", "items": map[string]any{"type": "object"}},
 			"summary":    str("[单条] 一句话描述这个探索方向：做什么+为什么。已写清方向即可，不依赖资产 id。"),
+			"coordination_key": map[string]any{"type": "string", "maxLength": 160, "description": "稳定的工作单元键（建议不超过160字符）：同一资产集合上同一调查目标/根因必须复用同一个键；不同漏洞类别、不同参数或本质不同的调查路线使用不同键。不要随机生成。数据库会按资产集合组合此键，并原子阻止重复的 open/running 意图。"},
 			"asset_ids":  map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "本方向要测试/攻击的【目标资产 id】（**尽量传**，0/1/多个；是 list_assets 返回的资产 id，不是探索节点 id）：这条探索方向针对哪些资产（站点/接口/参数/主机等）。只要方向围绕某些具体资产就务必传上——它是「这条探索打哪些目标」的结构化标记，用于覆盖去重、把意图连入资产链路。仅当纯全局侦察、确实没有具体目标资产时才留空。"},
 			"parent_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "上游锚点 id（可选，0/1/多个）：本方向由哪些【已确认的事实(fact)/发现(finding)】综合得出。**只能填已存在的 fact/finding 节点 id,不能填意图/目标/提示**——意图必须锚在已确认知识上,发现驱动而非凭空规划。多个事实共同产生一个新意图就传多个;顶层全新侦察方向请留空（会自动挂到任务起点 origin fact）。"},
 			"hypothesis": obj(map[string]any{
@@ -1201,15 +1269,20 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 
 			ids := make([]int64, len(items))
 			errs := map[string]string{}
+			deduplicated := map[string]int64{}
 			createdAny := false
 			for i, it := range items {
-				id, err := t.addOneIntent(it)
+				id, created, err := t.addOneIntent(it)
 				if err != nil {
 					errs[strconv.Itoa(i)] = err.Error()
 					continue
 				}
 				ids[i] = id
-				createdAny = true
+				if created {
+					createdAny = true
+				} else {
+					deduplicated[strconv.Itoa(i)] = id
+				}
 			}
 
 			// 人经主 agent 直投意图 → 若任务已 done（无 open 目标的 goalless 分支），把它
@@ -1224,9 +1297,15 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 				if e, bad := errs["0"]; bad {
 					return actool.Errorf(e), nil
 				}
+				if existingID, ok := deduplicated["0"]; ok {
+					return actool.Text(fmt.Sprintf("intent deduplicated: active intent %d already covers this work unit", existingID)), nil
+				}
 				return actool.Text(fmt.Sprintf("intent created: %d", ids[0])), nil
 			}
 			out := map[string]any{"ids": ids}
+			if len(deduplicated) > 0 {
+				out["deduplicated"] = deduplicated
+			}
 			if len(errs) > 0 {
 				out["errors"] = errs
 			}
@@ -1306,8 +1385,9 @@ func (t *ToolSet) goalMet() actool.CoreTool {
 // --- worker write tools ---
 
 func (t *ToolSet) addFinding() actool.CoreTool {
-	return writeTool("report_finding", "记录确认的漏洞，用 evidence 提供命令输出、日志等可验证证据。任务上下文传当前 intent_id。返回的 finding_id 是独立漏洞记录 ID，finding_node_id 是探索节点 ID（第一行保留该节点编号）。", obj(map[string]any{
+	return writeTool("report_finding", "记录确认的漏洞，用 evidence 提供命令输出、日志等可验证证据。root_cause_key 用稳定、具体的根因标识（资产/接口或参数 + 根因）；同一任务中同一根因必须复用，避免不同 Worker 重复登记。不要用泛化类别作为 key；不同根因必须使用不同 key。缺少 key 时不会自动去重。任务上下文传当前 intent_id。返回的 finding_id 是独立漏洞记录 ID，finding_node_id 是探索节点 ID；重复根因会归并到已有 Finding，并追加新证据。", obj(map[string]any{
 		"vulnclass": str("漏洞类别"), "name": str("漏洞名称"), "severity": str("critical|high|medium|low"), "summary": str("发现摘要"),
+		"root_cause_key": map[string]any{"type":"string","maxLength":256,"description":"可选但强烈建议填写：稳定、具体的根因键（资产/接口或参数 + 根因）；同一任务同一根因必须复用，缺少则不自动去重"},
 		"intent_id": idp("当前任务的意图 id"), "asset_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "受影响资产 id"},
 		"evidence":         str("证据/PoC 文本"),
 		"evidence_hint_id": idp("可选：本任务中对应此漏洞的提示节点 ID，自动携带其结构化 traffic_refs；不能引用继承提示或其他漏洞的提示"),
@@ -1316,6 +1396,7 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 	}, "vulnclass", "severity", "summary"), func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 		var a struct {
 			VulnClass, Name, Severity, Summary, Evidence string
+			RootCauseKey string `json:"root_cause_key"`
 			IntentID                                     json.RawMessage   `json:"intent_id"`
 			AssetIDs                                     []json.RawMessage `json:"asset_ids"`
 			TrafficRefs                                  []db.TrafficRef   `json:"traffic_refs"`
@@ -1326,6 +1407,22 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 		}
 		if t.ts == nil {
 			return actool.Errorf("report_finding 需要任务上下文；平台对话请通过 add_task_hint 向对应任务交接漏洞，并在提示中携带已有的 traffic_refs，由任务 Agent 登记。已登记漏洞可用 bind_finding_traffic 补绑。"), nil
+		}
+		intentID := pid(a.IntentID)
+		if intentID <= 0 {
+			intentID = t.ownerNode
+		}
+		if t.ownerNode > 0 && intentID != t.ownerNode {
+			return actool.Errorf("Worker 只能为自己当前领取的意图报告漏洞"), nil
+		}
+		if intentID > 0 {
+			allowed, gateErr := t.ts.IntentHypothesisFindingAllowed(intentID)
+			if gateErr != nil {
+				return actool.Errorf(fmt.Sprintf("检查漏洞假设生命周期失败: %v", gateErr)), nil
+			}
+			if !allowed {
+				return actool.Errorf("该意图包含结构化 hypothesis；必须先提交 outcome=confirmed 且 acceptance_criteria_met=true 的 record_hypothesis_result，才能 report_finding"), nil
+			}
 		}
 		// Auto-binding off: ignore the evidence params instead of rejecting the call.
 		// stripTrafficParameters already removes them from the advertised schema, but
@@ -1342,7 +1439,7 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 		if err != nil {
 			return actool.Errorf(err.Error()), nil
 		}
-		input := db.RecordFindingInput{TaskID: t.taskID, ExplorationID: t.ts.ID(), IntentID: pid(a.IntentID), VulnClass: a.VulnClass, Name: a.Name, Severity: a.Severity, Summary: a.Summary, Evidence: a.Evidence, Worker: t.worker, AssetIDs: pidList(a.AssetIDs)}
+		input := db.RecordFindingInput{TaskID: t.taskID, ExplorationID: t.ts.ID(), IntentID: intentID, VulnClass: a.VulnClass, Name: a.Name, Severity: a.Severity, Summary: a.Summary, Evidence: a.Evidence, Worker: t.worker, RootCauseKey: a.RootCauseKey, AssetIDs: pidList(a.AssetIDs)}
 		var recorded *db.RecordedFinding
 		if t.findingRecorder != nil {
 			recorded, err = t.findingRecorder.Record(ctx, input, refs)
@@ -1363,7 +1460,13 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 		} else if t.notify != nil {
 			t.notify()
 		}
-		t.writes.Findings++
+		if recorded.Deduplicated {
+			if recorded.CorroborationFact {
+				t.writes.Facts++
+			}
+		} else {
+			t.writes.Findings++
+		}
 		// Keep the first line's node-ID contract for existing reporter triggers.
 		for i := range recorded.Traffic.Bindings {
 			recorded.Traffic.Bindings[i].Snapshot.ReqHead = ""
@@ -1382,6 +1485,9 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 			}
 		}
 		raw, _ := json.Marshal(result)
+		if recorded.Deduplicated {
+			return actool.Text(fmt.Sprintf("finding deduplicated: %d\n%s", recorded.NodeID, raw)), nil
+		}
 		return actool.Text(fmt.Sprintf("finding recorded: %d\n%s", recorded.NodeID, raw)), nil
 	})
 }
@@ -1396,6 +1502,7 @@ type factItem struct {
 	Summary    string            `json:"summary"`
 	Detail     string            `json:"detail"`
 	Evidence   string            `json:"evidence"`   // 一行关键证据（命令+关键输出行），支撑结论、便于事后核对
+	TestStatus string            `json:"test_status"` // observed（仅资产观察/信息收集）| tested（完成了有证据的安全测试尝试）
 	Confidence string            `json:"confidence"` // observed（直接看到）| inferred（据现象推断）
 	IntentID   json.RawMessage   `json:"intent_id"`
 	AssetIDs   []json.RawMessage `json:"asset_ids"`
@@ -1414,6 +1521,22 @@ func (t *ToolSet) recordOneFact(it factItem, defaultIntent int64) (int64, error)
 	if e := strings.TrimSpace(it.Evidence); e != "" {
 		payload["evidence"] = e
 	}
+	testStatus := strings.ToLower(strings.TrimSpace(it.TestStatus))
+	if testStatus == "" {
+		testStatus = "observed"
+	}
+	if testStatus != "observed" && testStatus != "tested" {
+		return 0, fmt.Errorf("test_status 必须是 observed 或 tested")
+	}
+	if testStatus == "tested" {
+		if strings.TrimSpace(it.Evidence) == "" {
+			return 0, fmt.Errorf("test_status=tested 必须提供可复核 evidence")
+		}
+		if strings.ToLower(strings.TrimSpace(it.Confidence)) != "observed" {
+			return 0, fmt.Errorf("test_status=tested 必须是 confidence=observed 的直接观察结果")
+		}
+	}
+	payload["test_status"] = testStatus
 	if c := strings.TrimSpace(it.Confidence); c != "" {
 		payload["confidence"] = c
 	}
@@ -1446,13 +1569,15 @@ func (t *ToolSet) recordFact() actool.CoreTool {
 		"⚠️只写你在工具输出里【真实看到】的结论，不要脑补。evidence 与 confidence 用来防止不准确的结论污染图谱：\n"+
 		"  · evidence=支撑本结论的【一行】关键证据（命令+最能证明的那一两行输出），**务必简洁**——细节已在 detail，这里不要再粘大段输出。\n"+
 		"  · confidence=observed（输出里直接看到）| inferred（据现象推断）。\n"+
+		"  · test_status=observed（仅识别/观察资产）| tested（确实完成了安全测试尝试；必须有 evidence 且 confidence=observed）。仅有指纹、枚举、资产发现不能标 tested；测试结果无论正向或否定都可标 tested。\n"+
 		"  · **否定类结论**（不可注入/端口关闭/未发现入口等）只写\"观察 + 试探性读法\"——陈述你实际看到什么，方向是否放弃由规划者综合全局定；务必给 evidence，手段没穷尽或证据弱（含只探一次、看起来像）标 inferred，确已穷尽且直接看到才标 observed。",
 		obj(map[string]any{
-			"facts":      map[string]any{"type": "array", "description": "【有多条不同结论时用】事实数组，元素字段同下方顶层字段（summary/detail/evidence/confidence/intent_id/asset_ids）；省略 intent_id 则用顶层 intent_id。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
+			"facts":      map[string]any{"type": "array", "description": "【有多条不同结论时用】事实数组，元素字段同下方顶层字段（summary/detail/evidence/test_status/confidence/intent_id/asset_ids）；省略 intent_id 则用顶层 intent_id。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
 			"summary":    str("对本次探索结论的【总结性一句话】（是对 detail 的概括）"),
 			"intent_id":  idp("产生本事实的意图 id（你领到的意图；批量时作为各条默认）"),
 			"detail":     str("本事实的相关细节：把这次探索的多个观察事实都写进这里"),
 			"evidence":   str("【一行】关键证据：命令 + 最能证明结论的那一两行输出。务必简洁，不要粘大段输出（细节放 detail）。"),
+			"test_status": map[string]any{"type":"string","enum":[]string{"observed","tested"},"description":"observed=仅发现/观察资产；tested=确实完成安全测试尝试，必须同时提供 evidence 且 confidence=observed。未进行安全测试时省略或填 observed。"},
 			"confidence": str("observed（输出里直接看到）| inferred（据现象推断）。否定结论务必如实标注。"),
 			"asset_ids":  map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "相关资产 id（可选，0/1/多个）：该事实涉及哪些资产"},
 		}),
