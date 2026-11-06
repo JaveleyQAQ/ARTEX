@@ -50,9 +50,6 @@ func (t *ToolSet) recordHypothesisResult() actool.CoreTool {
 			if strings.TrimSpace(a.Summary)=="" || strings.TrimSpace(a.Evidence)=="" {
 				return actool.Errorf("summary 和 evidence 不能为空；只记录真实观察"), nil
 			}
-			if a.SupportingEvidence == nil || a.ContradictingEvidence == nil || a.AcceptanceCriteriaMet == nil {
-				return actool.Errorf("必须明确提交 supporting_evidence、contradicting_evidence（无则空数组）和 acceptance_criteria_met"), nil
-			}
 			intent, err := t.ts.GetNode(a.IntentID)
 			if err != nil || intent == nil || intent.Kind != db.KindIntent {
 				return actool.Errorf("intent_id 必须是本任务的意图节点"), nil
@@ -61,6 +58,9 @@ func (t *ToolSet) recordHypothesisResult() actool.CoreTool {
 			if err := json.Unmarshal(intent.Payload, &payload); err != nil { return actool.Errorf("意图 payload 无效"), nil }
 			hypothesis, ok := payload["hypothesis"].(map[string]any)
 			if !ok || hypothesis == nil { return actool.Errorf("该意图没有结构化 hypothesis，不能记录假设验证结果"), nil }
+			if a.SupportingEvidence == nil || a.ContradictingEvidence == nil || a.AcceptanceCriteriaMet == nil {
+				return actool.Errorf("必须明确提交 supporting_evidence、contradicting_evidence（无则空数组）和 acceptance_criteria_met"), nil
+			}
 			if a.Outcome == "confirmed" && !*a.AcceptanceCriteriaMet {
 				return actool.Errorf("confirmed 必须明确满足全部 acceptance_criteria；否则应记录 inconclusive 或 rejected"), nil
 			}
