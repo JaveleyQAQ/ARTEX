@@ -64,6 +64,15 @@ func TestRecordHypothesisResultPersistsOutcomeAndEvidence(t *testing.T) {
 	if err := store.SetIntentHypothesisLifecycle(intentID, "recorded", "inconclusive", factID); err != nil {
 		t.Fatal(err)
 	}
+	finding, err := tools.addFinding().Call(context.Background(), json.RawMessage(`{
+		"vulnclass":"AUTHZ","severity":"high","summary":"must not report an inconclusive hypothesis",
+		"intent_id":`+hypothesisFixtureJSONNumber(intentID)+`,
+		"evidence":"inconclusive result is not a confirmed vulnerability"
+	}`), nil)
+	if err != nil { t.Fatal(err) }
+	if !strings.Contains(finding.Flatten(), "必须先提交 outcome=confirmed") {
+		t.Fatalf("expected finding gate for inconclusive hypothesis, got %q", finding.Flatten())
+	}
 }
 
 func TestRecordHypothesisResultRequiresStructuredHypothesisAndEvidence(t *testing.T) {
