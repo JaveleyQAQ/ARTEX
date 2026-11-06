@@ -1150,8 +1150,12 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, bool, error) {
 		}
 		payload["hypothesis"] = h
 	}
+	coordinationLabel := intentCoordinationLabel(it)
+	if strings.TrimSpace(it.CoordinationKey) != "" && len([]rune(coordinationLabel)) > 160 {
+		return 0, false, fmt.Errorf("coordination_key 不能超过 160 个字符")
+	}
 	coordinationKey := intentCoordinationKey(it, anchors)
-	payload["coordination_label"] = intentCoordinationLabel(it)
+	payload["coordination_label"] = coordinationLabel
 	id, created, err := t.ts.AddIntentCoordinated(payload, priority, anchors, "planner", coordinationKey)
 	if err != nil {
 		return 0, false, err
@@ -1178,7 +1182,7 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 		obj(map[string]any{
 			"intents":    map[string]any{"type": "array", "description": "【优先用这个】要新增的探索方向数组，按顺序处理。每个元素字段同下方顶层字段（summary/coordination_key/asset_ids/parent_ids/priority）。返回 ids 与本数组等长、同序；复用已有活动意图时会在 deduplicated 中标记。", "items": map[string]any{"type": "object"}},
 			"summary":    str("[单条] 一句话描述这个探索方向：做什么+为什么。已写清方向即可，不依赖资产 id。"),
-			"coordination_key": str("稳定的工作单元键：同一资产集合上同一调查目标/根因必须复用同一个键；不同漏洞类别、不同参数或本质不同的调查路线使用不同键。不要随机生成。数据库会按资产集合组合此键，并原子阻止重复的 open/running 意图。"),
+			"coordination_key": map[string]any{"type": "string", "maxLength": 160, "description": "稳定的工作单元键（建议不超过160字符）：同一资产集合上同一调查目标/根因必须复用同一个键；不同漏洞类别、不同参数或本质不同的调查路线使用不同键。不要随机生成。数据库会按资产集合组合此键，并原子阻止重复的 open/running 意图。"},
 			"asset_ids":  map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "本方向要测试/攻击的【目标资产 id】（**尽量传**，0/1/多个；是 list_assets 返回的资产 id，不是探索节点 id）：这条探索方向针对哪些资产（站点/接口/参数/主机等）。只要方向围绕某些具体资产就务必传上——它是「这条探索打哪些目标」的结构化标记，用于覆盖去重、把意图连入资产链路。仅当纯全局侦察、确实没有具体目标资产时才留空。"},
 			"parent_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "上游锚点 id（可选，0/1/多个）：本方向由哪些【已确认的事实(fact)/发现(finding)】综合得出。**只能填已存在的 fact/finding 节点 id,不能填意图/目标/提示**——意图必须锚在已确认知识上,发现驱动而非凭空规划。多个事实共同产生一个新意图就传多个;顶层全新侦察方向请留空（会自动挂到任务起点 origin fact）。"},
 			"hypothesis": obj(map[string]any{
