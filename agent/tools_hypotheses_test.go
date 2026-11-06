@@ -49,7 +49,7 @@ func TestRecordHypothesisResultPersistsOutcomeAndEvidence(t *testing.T) {
 	if err != nil || fact == nil || fact.Kind != db.KindFact { t.Fatalf("fact=%+v err=%v",fact,err) }
 	var payload map[string]any
 	if err := json.Unmarshal(fact.Payload,&payload); err != nil { t.Fatal(err) }
-	if payload["hypothesis_outcome"]!="inconclusive" || payload["evidence"]=="" || payload["pattern_id"]!=float64(7) || payload["acceptance_criteria_met"]!=false || len(payload["contradicting_evidence"].([]any))!=1 {
+	if payload["hypothesis_outcome"]!="inconclusive" || payload["evidence"]=="" || payload["pattern_id"]!=float64(7) || payload["acceptance_criteria_met"]!=false || payload["test_status"]!="tested" || len(payload["contradicting_evidence"].([]any))!=1 {
 		t.Fatalf("hypothesis evidence not persisted: %#v",payload)
 	}
 	edges, err := store.Edges(100)
