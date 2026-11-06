@@ -101,6 +101,7 @@ type AssetRenderNode = { fold: false; key: string; kind: Kind; node: CoverageGra
 type RenderNode = AssetRenderNode | FoldNode;
 
 function sortChildren(a: CoverageGraphNode, b: CoverageGraphNode): number {
+  if (a.security_tested !== b.security_tested) return a.security_tested ? -1 : 1;
   if (a.tested !== b.tested) return a.tested ? -1 : 1;
   return (a.label || "").localeCompare(b.label || "");
 }
@@ -182,6 +183,7 @@ type G6NodeDatum = {
   kind: Kind;
   fold: boolean;
   tested: boolean;
+  securityTested: boolean;
   inScope: boolean;
   lbl: string;
   size: number;
@@ -219,6 +221,7 @@ function toG6Nodes(renderNodes: RenderNode[]): G6NodeDatum[] {
         kind: rn.kind,
         fold: true,
         tested: false,
+        securityTested: false,
         inScope: false,
         lbl: `还有 ${rn.hidden.length} 个${kindMeta[rn.kind].label}`,
         size: 24,
@@ -229,6 +232,7 @@ function toG6Nodes(renderNodes: RenderNode[]): G6NodeDatum[] {
       kind: rn.kind,
       fold: false,
       tested: rn.node.tested,
+      securityTested: rn.node.security_tested,
       inScope: rn.node.in_scope,
       lbl: trunc(graphLabel(rn.node) || kindMeta[rn.kind].label),
       size: kindMeta[rn.kind].size,
@@ -249,6 +253,7 @@ function nodeFill(d: G6NodeDatum): string {
 }
 function nodeStroke(d: G6NodeDatum): string {
   if (d.fold || !d.inScope) return "#94a3b8";
+  if (d.securityTested) return "#16a34a";
   if (d.tested) return "#0f766e";
   return "#64748b";
 }
@@ -353,6 +358,17 @@ function AssetSheet({
                         <span className="text-emerald-600 dark:text-emerald-400">有事实记录</span>
                       ) : (
                         <span className="text-neutral-500">未观察</span>
+                      )
+                    ) : (
+                      <span className="text-neutral-400">范围外（连接节点）</span>
+                    )}
+                  </DetailRow>
+                  <DetailRow label="安全测试状态">
+                    {node.in_scope ? (
+                      node.security_tested ? (
+                        <span className="text-emerald-600 dark:text-emerald-400">有直接证据的测试记录</span>
+                      ) : (
+                        <span className="text-neutral-500">尚无安全测试记录</span>
                       )
                     ) : (
                       <span className="text-neutral-400">范围外（连接节点）</span>
@@ -482,7 +498,7 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
       .then((g) => {
         // 资产覆盖度功能关闭(B1)：仍出图(范围内资产/company 关联依旧可见)，但抹平
         // tested 状态——不显示测试进度、不做事实记录高亮。
-        const nodes = coverageEnabled ? (g.nodes ?? []) : (g.nodes ?? []).map((n) => ({ ...n, tested: false }));
+        const nodes = coverageEnabled ? (g.nodes ?? []) : (g.nodes ?? []).map((n) => ({ ...n, tested: false, security_tested: false }));
         setData({ nodes, edges: g.edges ?? [] });
       })
       .catch(() => {
@@ -632,7 +648,8 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
   }, [selectedFoldId, selectedFold]);
 
   const total = data?.nodes.length ?? 0;
-  const tested = data?.nodes.filter((n) => n.in_scope && n.tested).length ?? 0;
+  const observed = data?.nodes.filter((n) => n.in_scope && n.tested).length ?? 0;
+  const securityTested = data?.nodes.filter((n) => n.in_scope && n.security_tested).length ?? 0;
   const inScope = data?.nodes.filter((n) => n.in_scope).length ?? 0;
 
   return (
@@ -649,7 +666,9 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
                 <>
                   {" "}
                   · 有事实记录{" "}
-                  <span className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{tested}</span>
+                  <span className="font-semibold tabular-nums">{observed}</span>
+                  {" "}· 安全测试{" "}
+                  <span className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{securityTested}</span>
                 </>
               )}
             </span>
@@ -678,10 +697,13 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
           {coverageEnabled && (
             <>
               <span className="inline-flex items-center gap-1.5">
-                <span className="size-3 rounded-full bg-emerald-500" /> 有 Fact（高亮）
+                <span className="size-3 rounded-full bg-neutral-500" /> 有 Fact（实色）
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <span className="size-3 rounded-full bg-neutral-400" /> 未测
+                <span className="size-3 rounded-full border-2 border-emerald-500" /> 有安全测试证据（绿边）
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="size-3 rounded-full bg-neutral-400" /> 无 Fact
               </span>
             </>
           )}
