@@ -24,6 +24,12 @@ func intentCoordinationKey(it intentItem, assetIDs []int64) string {
 		assetParts = append(assetParts, stringInt64(id))
 		last = id
 	}
+	if it.Hypothesis != nil {
+		assetRef := strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(it.Hypothesis.AssetRef)), " "))
+		if assetRef != "" {
+			assetParts = append(assetParts, "ref:"+assetRef)
+		}
+	}
 	assetScope := strings.Join(assetParts, ",")
 	work := strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(it.CoordinationKey)), " "))
 	if work == "" {
