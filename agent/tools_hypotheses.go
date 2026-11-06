@@ -34,7 +34,7 @@ func (t *ToolSet) recordHypothesisResult() actool.CoreTool {
 				Evidence string `json:"evidence"`
 				SupportingEvidence []string `json:"supporting_evidence"`
 				ContradictingEvidence []string `json:"contradicting_evidence"`
-				AcceptanceCriteriaMet bool `json:"acceptance_criteria_met"`
+				AcceptanceCriteriaMet *bool `json:"acceptance_criteria_met"`
 				Limitations []string `json:"limitations"`
 			}
 			if err := json.Unmarshal(in, &a); err != nil { return actool.Errorf(err.Error()), nil }
@@ -50,6 +50,9 @@ func (t *ToolSet) recordHypothesisResult() actool.CoreTool {
 			if strings.TrimSpace(a.Summary)=="" || strings.TrimSpace(a.Evidence)=="" {
 				return actool.Errorf("summary 和 evidence 不能为空；只记录真实观察"), nil
 			}
+			if a.SupportingEvidence == nil || a.ContradictingEvidence == nil || a.AcceptanceCriteriaMet == nil {
+				return actool.Errorf("必须明确提交 supporting_evidence、contradicting_evidence（无则空数组）和 acceptance_criteria_met"), nil
+			}
 			intent, err := t.ts.GetNode(a.IntentID)
 			if err != nil || intent == nil || intent.Kind != db.KindIntent {
 				return actool.Errorf("intent_id 必须是本任务的意图节点"), nil
@@ -58,7 +61,7 @@ func (t *ToolSet) recordHypothesisResult() actool.CoreTool {
 			if err := json.Unmarshal(intent.Payload, &payload); err != nil { return actool.Errorf("意图 payload 无效"), nil }
 			hypothesis, ok := payload["hypothesis"].(map[string]any)
 			if !ok || hypothesis == nil { return actool.Errorf("该意图没有结构化 hypothesis，不能记录假设验证结果"), nil }
-			if a.Outcome == "confirmed" && !a.AcceptanceCriteriaMet {
+			if a.Outcome == "confirmed" && !*a.AcceptanceCriteriaMet {
 				return actool.Errorf("confirmed 必须明确满足全部 acceptance_criteria；否则应记录 inconclusive 或 rejected"), nil
 			}
 			if a.Outcome != "confirmed" && a.AcceptanceCriteriaMet {
@@ -72,7 +75,7 @@ func (t *ToolSet) recordHypothesisResult() actool.CoreTool {
 				"evidence": a.Evidence, "hypothesis_intent_id": a.IntentID,
 				"supporting_evidence": a.SupportingEvidence,
 				"contradicting_evidence": a.ContradictingEvidence,
-				"acceptance_criteria_met": a.AcceptanceCriteriaMet,
+				"acceptance_criteria_met": *a.AcceptanceCriteriaMet,
 				"confidence": "observed",
 			}
 			if patternID, ok := hypothesis["pattern_id"]; ok { result["pattern_id"] = patternID }
@@ -86,6 +89,6 @@ func (t *ToolSet) recordHypothesisResult() actool.CoreTool {
 				return actool.Errorf(fmt.Sprintf("验证结果 fact %d 已保存，但生命周期状态更新失败: %v", factID, err)), nil
 			}
 			t.writes.Facts++
-			return jsonResult(map[string]any{"fact_id":factID,"intent_id":a.IntentID,"outcome":a.Outcome,"finding_required":a.Outcome=="confirmed" && a.AcceptanceCriteriaMet,"note":"验证结论已保存；confirmed 仍需独立 report_finding，不能仅凭假设或模式匹配报告漏洞。"})
+			return jsonResult(map[string]any{"fact_id":factID,"intent_id":a.IntentID,"outcome":a.Outcome,"finding_required":a.Outcome=="confirmed" && *a.AcceptanceCriteriaMet,"note":"验证结论已保存；confirmed 仍需独立 report_finding，不能仅凭假设或模式匹配报告漏洞。"})
 		})
 }
