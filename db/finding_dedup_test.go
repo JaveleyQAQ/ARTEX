@@ -114,3 +114,30 @@ func TestRecordFindingDeduplicatesSameTaskRootCauseAndPreservesEvidence(t *testi
 		t.Fatalf("missing root_cause_key must not trigger heuristic merging: %+v", fourth)
 	}
 }
+
+func TestFindingFingerprintNormalizesAssetOrderAndRootCause(t *testing.T) {
+	base := RecordFindingInput{
+		VulnClass: " AUTHZ ", RootCauseKey: "GET /api/orders/{id} | Missing ownership check",
+		AssetIDs: []int64{9, 3, 9},
+	}
+	reordered := RecordFindingInput{
+		VulnClass: "authz", RootCauseKey: "get /api/orders/{id} | missing ownership check",
+		AssetIDs: []int64{3, 9},
+	}
+	if first, second := FindingFingerprint(base), FindingFingerprint(reordered); first == "" || first != second {
+		t.Fatalf("equivalent root causes should normalize to one fingerprint: %q != %q", first, second)
+	}
+	distinct := reordered
+	distinct.RootCauseKey = "GET /api/orders/{id} | missing tenant isolation"
+	if FindingFingerprint(base) == FindingFingerprint(distinct) {
+		t.Fatal("different root causes must not share a fingerprint")
+	}
+	distinct = reordered
+	distinct.AssetIDs = []int64{3, 10}
+	if FindingFingerprint(base) == FindingFingerprint(distinct) {
+		t.Fatal("different asset sets must not share a fingerprint")
+	}
+	if got := FindingFingerprint(RecordFindingInput{VulnClass: "AUTHZ"}); got != "" {
+		t.Fatalf("missing root_cause_key must disable deduplication, got %q", got)
+	}
+}
