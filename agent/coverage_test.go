@@ -98,3 +98,11 @@ func TestRecordFactCannotClaimTestedWithoutDirectEvidence(t *testing.T) {
 		t.Fatal("test_status=tested without evidence must be rejected")
 	}
 }
+
+func mustJSONRaw(v any) json.RawMessage {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return raw
+}
