@@ -314,7 +314,19 @@ func intentAssetIDs(intent *db.Node) []int64 {
 }
 
 func renderIntentTask(intent *db.Node) string {
-	return fmt.Sprintf("\n\n【你领到的意图（本次唯一任务：只做这一条、只产生事实、做完即停）】：\n%s\n意图 id: %d（写回 record_fact / report_finding 时传它）", string(intent.Payload), intent.ID)
+	body := fmt.Sprintf("\n\n【你领到的意图（本次唯一任务：只做这一条、只产生事实、做完即停）】：\n%s\n意图 id: %d（写回 record_fact / report_finding / record_hypothesis_result 时传它）", string(intent.Payload), intent.ID)
+	var payload map[string]any
+	if intent != nil && json.Unmarshal(intent.Payload, &payload) == nil {
+		if hypothesis, ok := payload["hypothesis"].(map[string]any); ok && hypothesis != nil {
+			body += "\n\n【结构化漏洞假设验证协议】\n" +
+				"1. 先核对 hypothesis.preconditions；不满足时不要强行利用，记录 blocked 或 inconclusive。\n" +
+				"2. 按 verification_steps 逐项验证，只在当前任务授权资产和约束内操作；优先无副作用、可重复的验证，不执行破坏性操作。\n" +
+				"3. 对照 expected_evidence 与 acceptance_criteria。每个结论都必须来自真实请求/响应/命令输出，不得把模式命中或异常状态码当成漏洞证明。\n" +
+				"4. 验证结束必须调用 record_hypothesis_result，明确写入 confirmed/rejected/inconclusive/blocked 之一，并提供可复核 evidence 与 limitations。\n" +
+				"5. 只有 confirmed 且满足验收标准时才另行调用 report_finding；Finding 的 evidence 必须独立、可复现。其余结果只记验证事实，不得报告漏洞。"
+		}
+	}
+	return body
 }
 
 // renderWorkerGraphOverview folds the global situational snapshot into the worker's

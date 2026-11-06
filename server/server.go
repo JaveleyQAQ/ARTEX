@@ -752,6 +752,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/companies/{id}/scope", s.addCompanyScope)
 	mux.HandleFunc("POST /api/companies/reattribute", s.reattribute)
 
+	mux.HandleFunc("GET /api/vulnerability-patterns", s.listVulnerabilityPatterns)
+	mux.HandleFunc("POST /api/vulnerability-patterns", s.createVulnerabilityPattern)
+	mux.HandleFunc("GET /api/vulnerability-patterns/{id}", s.getVulnerabilityPattern)
+	mux.HandleFunc("PATCH /api/vulnerability-patterns/{id}/status", s.setVulnerabilityPatternStatus)
+
 	mux.HandleFunc("GET /api/exploration/frontier", s.frontier)
 	mux.HandleFunc("GET /api/exploration/findings", s.findings)
 	mux.HandleFunc("GET /api/exploration/findings/groups", s.findingGroups)

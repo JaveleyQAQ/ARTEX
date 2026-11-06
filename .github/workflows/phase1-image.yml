@@ -1,0 +1,192 @@
+name: Phase 1 container
+
+on:
+  push:
+    branches:
+      - feat/vulnerability-intelligence-foundation
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Additional image tag (for example phase1-latest)"
+        required: true
+        default: phase1-latest
+        type: string
+      deploy:
+        description: "Deploy to the configured test server over SSH after publishing"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: phase1-container-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate image tag and normalize image name
+        id: image
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag || 'phase1-latest' }}
+        run: |
+          if [[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::Invalid Docker image tag"
+            exit 1
+          fi
+          echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/artex" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run build:static
+
+      - name: Prepare embedded frontend
+        run: |
+          mkdir -p server/webui/dist
+          cp -a web/out/. server/webui/dist/
+          test -f server/webui/dist/index.html
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build Linux binaries for Docker
+        run: |
+          mkdir -p dist/amd64 dist/arm64
+          for arch in amd64 arm64; do
+            echo "Building linux/$arch"
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -tags embedui -trimpath -ldflags="-s -w" -o "dist/$arch/artex" ./cmd/artex
+            test -s "dist/$arch/artex"
+          done
+          ./dist/amd64/artex -h
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish multi-architecture image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ inputs.image_tag || 'phase1-latest' }}
+            ${{ steps.image.outputs.name }}:phase1-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.description=ARTEX Phase 1 test image
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deployment image summary
+        run: |
+          echo "Published image: ${{ steps.image.outputs.name }}:${{ inputs.image_tag || 'phase1-latest' }}"
+          echo "Commit image: ${{ steps.image.outputs.name }}:phase1-${GITHUB_SHA}"
+          echo "Source branch: ${GITHUB_REF_NAME}"
+          echo "Source commit: ${GITHUB_SHA}"
+
+  deploy-test-server:
+    environment: DEPLOY_HOST
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.deploy) || (github.event_name == 'push' && vars.DEPLOY_PHASE1 == 'true') }}
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        run: |
+          : "${DEPLOY_HOST:?Missing repository secret DEPLOY_HOST}"
+          : "${DEPLOY_USER:?Missing repository secret DEPLOY_USER}"
+          : "${DEPLOY_PATH:?Missing repository secret DEPLOY_PATH}"
+          : "${DEPLOY_SSH_KEY:?Missing repository secret DEPLOY_SSH_KEY}"
+          : "${DEPLOY_KNOWN_HOSTS:?Missing repository secret DEPLOY_KNOWN_HOSTS}"
+          : "${GHCR_USERNAME:?Missing repository secret GHCR_USERNAME}"
+          : "${GHCR_READ_TOKEN:?Missing repository secret GHCR_READ_TOKEN}"
+          if [[ ! "$GHCR_USERNAME" =~ ^[A-Za-z0-9-]+$ ]]; then
+            echo "::error::GHCR_USERNAME contains unsupported characters"
+            exit 1
+          fi
+          if [[ ! "$DEPLOY_PATH" =~ ^/[A-Za-z0-9_./-]+$ ]]; then
+            echo "::error::DEPLOY_PATH must be an absolute path using only letters, numbers, dot, underscore, slash, or hyphen"
+            exit 1
+          fi
+          if [[ -z "$DEPLOY_PORT" ]]; then DEPLOY_PORT=22; fi
+          if [[ ! "$DEPLOY_PORT" =~ ^[0-9]{1,5}$ ]] || (( DEPLOY_PORT < 1 || DEPLOY_PORT > 65535 )); then
+            echo "::error::DEPLOY_PORT must be between 1 and 65535"
+            exit 1
+          fi
+          echo "DEPLOY_PORT=$DEPLOY_PORT" >> "$GITHUB_ENV"
+
+      - name: Configure SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Log in to GHCR on the deployment server
+        run: |
+          printf '%s' "$GHCR_READ_TOKEN" | ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "docker login ghcr.io --username '$GHCR_USERNAME' --password-stdin"
+
+      - name: Copy Compose files to test server
+        run: |
+          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
+          scp -P "$DEPLOY_PORT" docker-compose.phase1.yml skills \
+            "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+
+      - name: Deploy immutable image to isolated Phase 1 stack
+        run: |
+          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_PATH' && ARTEX_TAG='phase1-$GITHUB_SHA' docker compose -p artex-phase1 --env-file .env.phase1 -f docker-compose.phase1.yml pull artex && ARTEX_TAG='phase1-$GITHUB_SHA' docker compose -p artex-phase1 --env-file .env.phase1 -f docker-compose.phase1.yml up -d && docker compose -p artex-phase1 --env-file .env.phase1 -f docker-compose.phase1.yml ps"
+
+      - name: Verify Phase 1 HTTP health on deployment server
+        run: |
+          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "DEPLOY_PATH='$DEPLOY_PATH' bash -s" <<'REMOTE'
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:18787/api/health; then
+              echo
+              echo "Phase 1 health check passed."
+              exit 0
+            fi
+            echo "Waiting for ARTEX health endpoint (attempt $attempt/30)..."
+            sleep 3
+          done
+          echo "Phase 1 health check failed; recent container logs follow:"
+          docker compose -p artex-phase1 --env-file .env.phase1 -f "$DEPLOY_PATH/docker-compose.phase1.yml" logs --tail=100 artex
+          exit 1
+          REMOTE
