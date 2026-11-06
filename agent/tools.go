@@ -23,6 +23,9 @@ func compactIntents(ns []*db.Node, parentsOf, yieldsOf map[int64][]int64) []map[
 		var p map[string]any
 		_ = json.Unmarshal(n.Payload, &p)
 		m := map[string]any{"id": n.ID, "summary": p["summary"], "state": n.State}
+		if key, ok := p["coordination_key"].(string); ok && key != "" {
+			m["coordination_key"] = key
+		}
 		if n.Inherited {
 			m["source_task_id"] = n.SourceTaskID
 			m["inherited"] = true
@@ -1070,30 +1073,31 @@ type hypothesisSpec struct {
 }
 
 type intentItem struct {
-	Summary    string            `json:"summary"`
-	AssetIDs   []json.RawMessage `json:"asset_ids"`
-	ParentIDs  []json.RawMessage `json:"parent_ids"`
-	Priority   int               `json:"priority"`
-	Hypothesis *hypothesisSpec   `json:"hypothesis,omitempty"`
+	Summary         string            `json:"summary"`
+	CoordinationKey string            `json:"coordination_key,omitempty"`
+	AssetIDs        []json.RawMessage `json:"asset_ids"`
+	ParentIDs       []json.RawMessage `json:"parent_ids"`
+	Priority        int               `json:"priority"`
+	Hypothesis      *hypothesisSpec   `json:"hypothesis,omitempty"`
 }
 
 // addOneIntent 创建一条意图节点并连上游血缘，返回 id。
 // 约束：意图只能锚在已确认知识上——每个 parent_id 必须是已存在的 fact/finding
 // 节点（不能挂在别的意图/目标/提示上）。顶层全新方向留空 parent_ids，兜底连 origin fact。
 // 这样"每个意图都连到 fact 节点、且是发现驱动而非凭空规划"从创建路径上被强制。
-func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
+func (t *ToolSet) addOneIntent(it intentItem) (int64, bool, error) {
 	if strings.TrimSpace(it.Summary) == "" {
-		return 0, fmt.Errorf("summary 不能为空")
+		return 0, false, fmt.Errorf("summary 不能为空")
 	}
 	// 先校验锚点（建节点前，避免坏锚点留下孤儿意图）。
 	parents := pidList(it.ParentIDs)
 	for _, pidv := range parents {
 		n, err := t.ts.GetNodeWithSources(pidv)
 		if err != nil || n == nil {
-			return 0, fmt.Errorf("parent_id %d 不存在于本任务或直接关联任务：parent_ids 必须是已存在的【事实(fact)/发现(finding)】节点 id；顶层全新方向请留空 parent_ids", pidv)
+			return 0, false, fmt.Errorf("parent_id %d 不存在于本任务或直接关联任务：parent_ids 必须是已存在的【事实(fact)/发现(finding)】节点 id；顶层全新方向请留空 parent_ids", pidv)
 		}
 		if n.Kind != db.KindFact && n.Kind != db.KindFinding {
-			return 0, fmt.Errorf("parent_id %d 是 %q 节点，不能作为意图锚点：意图只能锚在已确认的【事实(fact)/发现(finding)】上，不能挂在意图/目标/提示上；顶层全新方向请留空 parent_ids", pidv, n.Kind)
+			return 0, false, fmt.Errorf("parent_id %d 是 %q 节点，不能作为意图锚点：意图只能锚在已确认的【事实(fact)/发现(finding)】上，不能挂在意图/目标/提示上；顶层全新方向请留空 parent_ids", pidv, n.Kind)
 		}
 	}
 	priority := it.Priority
@@ -1105,7 +1109,7 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 	if t.as != nil && len(anchors) > 0 {
 		hits, err := t.as.CheckAssetsIntercept(t.taskID, anchors)
 		if err != nil {
-			return 0, fmt.Errorf("资产拦截校验失败：%w", err)
+			return 0, false, fmt.Errorf("资产拦截校验失败：%w", err)
 		}
 		if len(hits) > 0 {
 			var b strings.Builder
@@ -1113,7 +1117,7 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 			for _, h := range hits {
 				fmt.Fprintf(&b, "\n - %s", h.Describe())
 			}
-			return 0, fmt.Errorf("%s", b.String())
+			return 0, false, fmt.Errorf("%s", b.String())
 		}
 	}
 	payload := map[string]any{"summary": it.Summary}
@@ -1123,32 +1127,33 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 	if it.Hypothesis != nil {
 		h := *it.Hypothesis
 		if len(h.VerificationSteps) == 0 || len(h.ExpectedEvidence) == 0 {
-			return 0, fmt.Errorf("漏洞假设必须包含 verification_steps 和 expected_evidence")
+			return 0, false, fmt.Errorf("漏洞假设必须包含 verification_steps 和 expected_evidence")
 		}
 		if h.PatternID < 0 {
-			return 0, fmt.Errorf("pattern_id 不能为负数")
+			return 0, false, fmt.Errorf("pattern_id 不能为负数")
 		}
 		if h.PatternID > 0 {
 			pattern, err := t.ts.GetVulnerabilityPattern(h.PatternID)
 			if err != nil || pattern == nil {
-				return 0, fmt.Errorf("漏洞假设引用的 pattern_id %d 不存在", h.PatternID)
+				return 0, false, fmt.Errorf("漏洞假设引用的 pattern_id %d 不存在", h.PatternID)
 			}
 			if pattern.Status != db.PatternReviewed && pattern.Status != db.PatternVerified {
-				return 0, fmt.Errorf("漏洞假设只能引用 reviewed/verified 模式，pattern %d 当前状态为 %s", h.PatternID, pattern.Status)
+				return 0, false, fmt.Errorf("漏洞假设只能引用 reviewed/verified 模式，pattern %d 当前状态为 %s", h.PatternID, pattern.Status)
 			}
 			if h.PatternKey != "" && h.PatternKey != pattern.PatternKey {
-				return 0, fmt.Errorf("pattern_key 与 pattern_id 不匹配")
+				return 0, false, fmt.Errorf("pattern_key 与 pattern_id 不匹配")
 			}
 			h.PatternKey = pattern.PatternKey
 		}
 		if len(anchors) == 0 && strings.TrimSpace(h.AssetRef) == "" {
-			return 0, fmt.Errorf("漏洞假设必须绑定 asset_ids 或 asset_ref")
+			return 0, false, fmt.Errorf("漏洞假设必须绑定 asset_ids 或 asset_ref")
 		}
 		payload["hypothesis"] = h
 	}
-	id, err := t.ts.AddIntent(payload, priority, anchors, "planner")
+	coordinationKey := intentCoordinationKey(it, anchors)
+	id, created, err := t.ts.AddIntentCoordinated(payload, priority, anchors, "planner", coordinationKey)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	// upstream lineage: link each (validated) fact/finding parent → this intent, so
 	// "multiple facts combine into one new intent" is expressible.
@@ -1163,15 +1168,16 @@ func (t *ToolSet) addOneIntent(it intentItem) (int64, error) {
 			_ = t.ts.Link(origin, db.RelDerivedFrom, id)
 		}
 	}
-	return id, nil
+	return id, created, nil
 }
 
 func (t *ToolSet) addIntent() actool.CoreTool {
-	return t.writeExpTool("add_intent", "生成【探索方向】写入 frontier，并连入探索链路。对已检索到 reviewed/verified 漏洞模式、或由明确资产观察触发的漏洞测试方向，必须尽量提供结构化 hypothesis：前置条件、触发指标、逐项非破坏性验证步骤、预期证据、不确定性和验收标准；同时绑定 asset_ids。没有足够依据时不要伪造假设，可创建普通侦察意图。\n"+
+	return t.writeExpTool("add_intent", "生成【探索方向】写入 frontier，并连入探索链路。对已检索到 reviewed/verified 漏洞模式、或由明确资产观察触发的漏洞测试方向，必须尽量提供结构化 hypothesis：前置条件、触发指标、逐项非破坏性验证步骤、预期证据、不确定性和验收标准；同时绑定 asset_ids。没有足够依据时不要伪造假设，可创建普通侦察意图。每条意图必须提供稳定 coordination_key；同一资产集合、同一调查目标/根因复用同一键，不同技术路线使用不同键。数据库会原子去重 active 意图。\n"+
 		"★优先批量：一轮筛出的多个新方向放进 intents 数组一次提交（比逐条调用省往返）。返回 ids 数组，与 intents 等长同序（失败项 id=0，详情见 errors）。单条则省略 intents 直接给顶层 summary。",
 		obj(map[string]any{
 			"intents":    map[string]any{"type": "array", "description": "【优先用这个】要新增的探索方向数组，按顺序处理。每个元素字段同下方顶层字段（summary/asset_ids/parent_ids/priority）。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
 			"summary":    str("[单条] 一句话描述这个探索方向：做什么+为什么。已写清方向即可，不依赖资产 id。"),
+			"coordination_key": str("稳定的工作单元键：同一资产集合上同一调查目标/根因必须复用同一个键；不同漏洞类别、不同参数或本质不同的调查路线使用不同键。不要随机生成。数据库会按资产集合组合此键，并原子阻止重复的 open/running 意图。"),
 			"asset_ids":  map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "本方向要测试/攻击的【目标资产 id】（**尽量传**，0/1/多个；是 list_assets 返回的资产 id，不是探索节点 id）：这条探索方向针对哪些资产（站点/接口/参数/主机等）。只要方向围绕某些具体资产就务必传上——它是「这条探索打哪些目标」的结构化标记，用于覆盖去重、把意图连入资产链路。仅当纯全局侦察、确实没有具体目标资产时才留空。"},
 			"parent_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "上游锚点 id（可选，0/1/多个）：本方向由哪些【已确认的事实(fact)/发现(finding)】综合得出。**只能填已存在的 fact/finding 节点 id,不能填意图/目标/提示**——意图必须锚在已确认知识上,发现驱动而非凭空规划。多个事实共同产生一个新意图就传多个;顶层全新侦察方向请留空（会自动挂到任务起点 origin fact）。"},
 			"hypothesis": obj(map[string]any{
@@ -1201,15 +1207,20 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 
 			ids := make([]int64, len(items))
 			errs := map[string]string{}
+			deduplicated := map[string]int64{}
 			createdAny := false
 			for i, it := range items {
-				id, err := t.addOneIntent(it)
+				id, created, err := t.addOneIntent(it)
 				if err != nil {
 					errs[strconv.Itoa(i)] = err.Error()
 					continue
 				}
 				ids[i] = id
-				createdAny = true
+				if created {
+					createdAny = true
+				} else {
+					deduplicated[strconv.Itoa(i)] = id
+				}
 			}
 
 			// 人经主 agent 直投意图 → 若任务已 done（无 open 目标的 goalless 分支），把它
@@ -1224,9 +1235,15 @@ func (t *ToolSet) addIntent() actool.CoreTool {
 				if e, bad := errs["0"]; bad {
 					return actool.Errorf(e), nil
 				}
+				if existingID, ok := deduplicated["0"]; ok {
+					return actool.Text(fmt.Sprintf("intent deduplicated: active intent %d already covers this work unit", existingID)), nil
+				}
 				return actool.Text(fmt.Sprintf("intent created: %d", ids[0])), nil
 			}
 			out := map[string]any{"ids": ids}
+			if len(deduplicated) > 0 {
+				out["deduplicated"] = deduplicated
+			}
 			if len(errs) > 0 {
 				out["errors"] = errs
 			}
