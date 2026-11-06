@@ -549,10 +549,12 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 				if cov, err := t.as.TaskCoverageWithSources(t.taskID); err == nil {
 					m["denominator"] = cov.Denominator
 					m["observed"] = cov.Observed
-					m["tested"] = cov.SecurityTested
+					m["tested"] = cov.Tested // backward-compatible alias for observed
+					m["observed_pct"] = cov.Pct
+					m["security_tested"] = cov.SecurityTested
 					m["security_tested_pct"] = cov.SecurityTestedPct
 					m["by_type"] = cov.ByType
-					m["note"] = "observed=至少有一条 Fact 关联该资产；tested=Worker 明确记录完成了有直接证据的安全测试尝试（不代表发现漏洞）。仅指纹/枚举/资产发现不会增加 tested。历史 Fact 未显式标记 test_status 时只计入 observed。范围包含当前任务及直接关联任务；关联 scope 只读。list_untested_assets 仍按是否有 Fact 观察筛选。"
+					m["note"] = "observed=至少有一条 Fact 关联该资产；tested 为兼容旧字段，仍等于 observed；security_tested=Worker 明确记录完成了有直接证据的安全测试尝试（不代表发现漏洞）。仅指纹/枚举/资产发现不会增加 security_tested。历史 Fact 未显式标记 test_status 时只计入 observed。范围包含当前任务及直接关联任务；关联 scope 只读。list_untested_assets 仍按是否有 Fact 观察筛选。"
 					if cov.Denominator == 0 {
 						m["pct"] = nil
 						m["status"] = "范围未锚定"
