@@ -383,7 +383,7 @@ func RecordFindingTx(ctx context.Context, tx *sql.Tx, in RecordFindingInput, pre
 SET evidence = CASE
 		WHEN position($2 in evidence) > 0 THEN evidence
 		WHEN evidence = '' THEN $2
-		ELSE evidence || E'\\n\\n--- corroborating evidence ---\\n\\n' || $2
+		ELSE evidence || E'\n\n--- corroborating evidence ---\n\n' || $2
 END
 WHERE id=$1`, existingFindingID, in.Evidence); err != nil {
 					return nil, err
