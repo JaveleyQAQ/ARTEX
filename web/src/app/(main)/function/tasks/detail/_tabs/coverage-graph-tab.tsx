@@ -244,7 +244,7 @@ function toG6Nodes(renderNodes: RenderNode[]): G6NodeDatum[] {
 // 回调形参用 unknown 满足 G6 签名，内部用 nd() 强转回我们的顶层结构。
 const nd = (d: unknown) => d as G6NodeDatum;
 
-// 有事实记录=实色高亮；范围内无 Fact=灰；范围外/折叠=更淡的灰 + 虚线描边。
+// 有 Fact=按资产类型实色；安全测试证据=绿色描边；无 Fact=灰；范围外/折叠=更淡灰 + 虚线描边。
 function nodeFill(d: G6NodeDatum): string {
   if (d.fold) return "#f1f5f9";
   if (!d.inScope) return "#e2e8f0";
@@ -522,7 +522,7 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
   // 结构签名：只在可见节点/边集合变化时重建图 + 重跑布局，避免无谓抖动。
   const sig = React.useMemo(
     () =>
-      `${renderNodes.map((n) => `${n.key}:${n.fold ? "f" : n.node.tested ? "t" : "u"}`).sort().join(",")}|${renderEdges.length}`,
+      `${renderNodes.map((n) => `${n.key}:${n.fold ? "f" : n.node.security_tested ? "s" : n.node.tested ? "t" : "u"}`).sort().join(",")}|${renderEdges.length}`,
     [renderNodes, renderEdges],
   );
 
