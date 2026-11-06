@@ -270,6 +270,7 @@ type CoverageAsset struct {
 type CoverageByType struct {
 	Type           string `json:"type"`
 	Total          int    `json:"total"`
+	Observed       int    `json:"observed"`
 	Tested         int    `json:"tested"` // legacy alias: any fact observed on this asset
 	SecurityTested int    `json:"security_tested"` // explicit evidence-backed security test attempt
 }
@@ -281,6 +282,7 @@ type Coverage struct {
 	Enabled     bool             `json:"enabled"`     // 资产覆盖度功能是否开启；false 时其余字段为零值
 	ScopeRows   int              `json:"scope_rows"`  // 0 → 范围未锚定
 	Denominator int              `json:"denominator"` // 范围内资产数
+	Observed    int              `json:"observed"`
 	Tested            int              `json:"tested"` // legacy alias: assets with any fact observation
 	SecurityTested    int              `json:"security_tested"` // assets with explicit evidence-backed security test attempts
 	Pct               *float64         `json:"pct"` // legacy observed-asset ratio
@@ -353,8 +355,10 @@ FROM target t GROUP BY t.type ORDER BY t.type`, taskID, expID)
 		if err := rows.Scan(&bt.Type, &bt.Total, &bt.Tested, &bt.SecurityTested); err != nil {
 			return nil, err
 		}
+		bt.Observed = bt.Tested
 		cov.ByType = append(cov.ByType, bt)
 		cov.Denominator += bt.Total
+		cov.Observed += bt.Observed
 		cov.Tested += bt.Tested
 		cov.SecurityTested += bt.SecurityTested
 	}
