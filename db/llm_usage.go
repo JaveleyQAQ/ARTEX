@@ -15,6 +15,7 @@ import (
 type LLMUsage struct {
 	TaskID        string `json:"task_id"`        // task registry id (matches llm_records.task_id)
 	ExplorationID int64  `json:"exploration_id"` // exploration id parsed from the session (0 = unknown/non-task)
+	IntentID      int64  `json:"intent_id"`
 	Worker        string `json:"worker"`         // agent lane: worker / planner / mainagent / goals
 	Model         string `json:"model"`
 	ProfileName   string `json:"profile_name"`
@@ -32,6 +33,7 @@ CREATE TABLE IF NOT EXISTS llm_usage (
     ts             TIMESTAMPTZ NOT NULL DEFAULT now(),
     task_id        TEXT,
     exploration_id BIGINT,
+    intent_id      BIGINT,
     worker         TEXT,
     model          TEXT,
     profile_name   TEXT,
@@ -44,7 +46,9 @@ CREATE TABLE IF NOT EXISTS llm_usage (
 );
 CREATE INDEX IF NOT EXISTS idx_llm_usage_task  ON llm_usage(task_id);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_model ON llm_usage(task_id, model);
+ALTER TABLE llm_usage ADD COLUMN IF NOT EXISTS intent_id BIGINT;
 CREATE INDEX IF NOT EXISTS idx_llm_usage_exp   ON llm_usage(exploration_id);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_intent ON llm_usage(intent_id) WHERE intent_id IS NOT NULL;
 `
 
 // EnsureLLMUsageTable creates the llm_usage metering table if it does not exist.
@@ -70,10 +74,14 @@ func (d *DB) InsertLLMUsage(u *LLMUsage) error {
 	if u.ExplorationID > 0 {
 		expID = u.ExplorationID
 	}
+	var intentID any
+	if u.IntentID > 0 {
+		intentID = u.IntentID
+	}
 	_, err := d.Exec(`
-INSERT INTO llm_usage(task_id, exploration_id, worker, model, profile_name, latency_ms, input_tokens, output_tokens, cache_read, cache_write, status)
-VALUES (NULLIF($1,''),$2,NULLIF($3,''),NULLIF($4,''),NULLIF($5,''),$6,$7,$8,$9,$10,$11)`,
-		u.TaskID, expID, u.Worker, u.Model, u.ProfileName,
+INSERT INTO llm_usage(task_id, exploration_id, intent_id, worker, model, profile_name, latency_ms, input_tokens, output_tokens, cache_read, cache_write, status)
+VALUES (NULLIF($1,''),$2,$3,NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),$7,$8,$9,$10,$11,$12)`,
+		u.TaskID, expID, intentID, u.Worker, u.Model, u.ProfileName,
 		u.LatencyMs, u.InputTokens, u.OutputTokens, u.CacheRead, u.CacheWrite, u.Status)
 	return err
 }
@@ -331,4 +339,26 @@ func ParseExpID(s string) int64 {
 		return 0
 	}
 	return n
+}
+
+// IntentUsage is the exact metered spend attributed to one claimed Intent.
+type IntentUsage struct {
+	Calls int `json:"calls"`
+	InputTokens int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	CacheReadTokens int `json:"cache_read_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens"`
+	LatencyMs int64 `json:"latency_ms"`
+}
+
+func (s *ExplorationStore) LLMUsageForIntent(intentID int64) (IntentUsage, error) {
+	var usage IntentUsage
+	err := s.db.QueryRow(`
+SELECT COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
+       COALESCE(SUM(cache_read),0), COALESCE(SUM(cache_write),0), COALESCE(SUM(latency_ms),0)
+FROM llm_usage
+WHERE intent_id=$1 AND exploration_id=$2`, intentID, s.expID).Scan(
+		&usage.Calls, &usage.InputTokens, &usage.OutputTokens,
+		&usage.CacheReadTokens, &usage.CacheWriteTokens, &usage.LatencyMs)
+	return usage, err
 }
