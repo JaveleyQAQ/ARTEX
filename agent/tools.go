@@ -413,7 +413,10 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 	hidden := func(id int64) bool { _, c := covered[id]; return c && !hotAtRender[id] }
 	// Exact per-call spend is attached to each intent so the Planner can weigh
 	// marginal progress against real provider cost. Missing rows mean zero spend.
-	usageRows, _ := t.ts.LLMUsageByIntent()
+	usageRows, usageErr := t.ts.LLMUsageByIntent()
+	if usageErr != nil {
+		out["intent_usage_error"] = usageErr.Error()
+	}
 	usageByIntent := make(map[int64]db.IntentUsageSummary, len(usageRows))
 	for _, usage := range usageRows {
 		usageByIntent[usage.IntentID] = usage
